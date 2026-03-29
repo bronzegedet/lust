@@ -1,0 +1,11 @@
+fn lustgex_compile(pattern)
+    return compile_lustgex(pattern)
+end
+
+fn lustgex_matches(text, pattern)
+    return lustgex_match(text, pattern)
+end
+
+fn lustgex_capture(text, pattern)
+    return lustgex_capture_builtin(text, pattern)
+end

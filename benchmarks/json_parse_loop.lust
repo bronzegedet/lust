@@ -1,0 +1,75 @@
+fn is_digit_char(ch)
+    let digits = "0123456789"
+    return digits.contains(ch)
+end
+
+fn parse_positive_int(raw)
+    let text = raw.trim()
+    let value = 0
+    let i = 0
+    while i < text.length() do
+        let ch = text.at(i)
+        if not is_digit_char(ch) then
+            return value
+        end
+        value = value * 10 + ("0123456789".split(ch)[0].length())
+        i += 1
+    end
+    return value
+end
+
+fn resolve_iterations(args, fallback)
+    if args.length() > 0 then
+        let parsed = parse_positive_int(args[0])
+        if parsed > 0 then
+            return parsed
+        end
+    end
+    return fallback
+end
+
+fn bool_text(flag)
+    if flag then
+        return "true"
+    end
+    return "false"
+end
+
+fn build_json_payload(i)
+    let score_a = ((i * 11) % 90) + 10
+    let score_b = ((i * 17) % 90) + 10
+    let dept = ["engineering", "police", "fire", "clerks", "public_works"][i % 5]
+    let active = bool_text((i % 2) == 0)
+    return "{\"user\":{\"id\":" + to_string(i)
+        + ",\"dept\":\"" + dept
+        + "\",\"active\":" + active
+        + ",\"scores\":[" + to_string(score_a) + "," + to_string(score_b) + "]}}"
+end
+
+fn main()
+    let args = get_args()
+    let iterations = resolve_iterations(args, 5000)
+    let active_count = 0
+    let score_sum = 0
+    let checksum = 0
+    let i = 0
+
+    while i < iterations do
+        let payload = build_json_payload(i)
+        let data = json_parse(payload)
+        if data["user"]["active"] then
+            active_count += 1
+        end
+        score_sum += data["user"]["scores"][0] + data["user"]["scores"][1]
+        checksum += data["user"]["dept"].length()
+        i += 1
+    end
+
+    print("benchmark", "json_parse_loop")
+    print("iterations", iterations)
+    print("active_count", active_count)
+    print("score_sum", score_sum)
+    print("checksum", checksum)
+end
+
+main()

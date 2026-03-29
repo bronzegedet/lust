@@ -1,0 +1,12 @@
+import "std/path"
+
+fn main()
+    print(join("examples", "cli.lust"))
+    print(parent("examples/cli.lust"))
+    print(file_name("examples/cli.lust"))
+    print(extension("examples/cli.lust"))
+    print(stem("examples/cli.lust"))
+    print(with_extension("examples/cli.lust", "txt"))
+end
+
+main()

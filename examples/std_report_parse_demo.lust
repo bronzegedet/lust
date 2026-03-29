@@ -1,0 +1,55 @@
+import "std/strings"
+import "std/lustgex"
+
+enum LineType = OrderHeader | ItemHeader | ItemRow | Footer | Ignore
+
+fn classify_line(line) -> LineType
+    let order_pattern = r#"start then "BR/ORD#" then fewest anything"#
+    let item_header_pattern = r#"start then "CODE|" then fewest anything"#
+    let footer_pattern = r#"start then "*********" then end"#
+    let row_pattern = r#"start then fewest anything then "|" then fewest anything then "|" then integer then "|" then integer then end"#
+
+    if lustgex_match(line, order_pattern) then
+        return OrderHeader
+    end
+    if lustgex_matches(line, item_header_pattern) then
+        return ItemHeader
+    end
+    if lustgex_match(line, footer_pattern) then
+        return Footer
+    end
+    if lustgex_match(line, row_pattern) then
+        return ItemRow
+    end
+    return Ignore
+end
+
+fn main()
+    let content = read_file("reconcile_sample.txt")
+    let lines = content.lines()
+
+    for raw_line in lines do
+        let line = raw_line.trim()
+        match classify_line(line) do
+            case OrderHeader then
+                let order_match = lustgex_capture(line, r#"start then "BR/ORD#|" then fewest anything as order_id then "|" then fewest anything as company then end"#)
+                if order_match != null then
+                    print("order=${order_match.order_id} company=${order_match.company}")
+                end
+            case ItemRow then
+                let item_match = lustgex_capture(line, r#"start then fewest anything as code then "|" then fewest anything as desc then "|" then integer as system_qty then "|" then integer as physical_qty then end"#)
+                if item_match != null then
+                    let system_qty = parse_positive_int(item_match.system_qty)
+                    let physical_qty = parse_positive_int(item_match.physical_qty)
+                    print("item=${item_match.code} desc=${item_match.desc} system=${system_qty} physical=${physical_qty}")
+                end
+            case _ then
+                pass
+        end
+    end
+
+    let pattern = r#"start then blanks then integer then fewest anything then end"#
+    print("lustgex=${lustgex_compile(pattern)}")
+end
+
+main()

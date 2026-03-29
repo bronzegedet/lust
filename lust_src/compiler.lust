@@ -1,0 +1,903 @@
+-- Lust in Lust Compiler (Phase 5: Full Self-Host)
+-- Implements robust recursive-descent parsing with global state.
+
+let G_ALPHABET = ""
+let G_DIGITS = ""
+let G_TOKENS = []
+let G_POS = 0
+let G_NUM_TOKENS = 0
+let G_EMITTED = []
+let G_NODES = []
+
+fn init_compiler()
+    G_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    G_DIGITS = "0123456789"
+    G_TOKENS = []
+    G_POS = 0
+    G_NUM_TOKENS = 0
+    G_EMITTED = []
+    G_NODES = []
+end
+
+fn is_alpha(c)
+    return c.is_alphabetic()
+end
+
+fn is_digit(c)
+    return c.is_numeric()
+end
+
+fn escape(s)
+    let res = ""
+    let i = 0
+    let len = s.length()
+    while i < len do
+        let c = s[i]
+        if c == "\\" and i + 1 < len then
+            let n = s[i + 1]
+            if n == "n" then res = res + "\\n"
+            else if n == "r" then res = res + "\\r"
+            else if n == "t" then res = res + "\\t"
+            else if n == "\"" then res = res + "\\\""
+            else if n == "\\" then res = res + "\\\\"
+            else res = res + "\\\\" + n end
+            i = i + 2
+        else if c == "\n" then res = res + "\\n"
+            i = i + 1
+        else if c == "\r" then res = res + "\\r"
+            i = i + 1
+        else if c == "\t" then res = res + "\\t"
+            i = i + 1
+        else if c == "\\" then res = res + "\\\\"
+            i = i + 1
+        else if c == "\"" then res = res + "\\\""
+            i = i + 1
+        else
+            res = res + c
+            i = i + 1
+        end
+    end
+    return res
+end
+
+struct Tok {
+    tok_type,
+    v_val
+}
+
+fn Token(t, v) return Tok { tok_type: t, v_val: v } end
+
+fn join_list(list, sep)
+    let res = ""
+    let i = 0
+    let len = list.length()
+    while i < len do
+        res = res + list[i].to_string()
+        if i < len - 1 then
+            res = res + sep
+        end
+        i = i + 1
+    end
+    return res
+end
+
+struct Node {
+    node_type,
+    name,
+    v_val,
+    children
+}
+
+fn AstNode(nt, n, v, c) return Node { node_type: nt, name: n, v_val: v, children: c } end
+
+fn lex(source)
+    let chars = source.to_list()
+    let tokens = []
+    let i = 0
+    let len = chars.length()
+    while i < len do
+        let c = chars[i]
+        if c == " " or c == "\n" or c == "\r" or c == "\t" then
+            i = i + 1
+        else if c == "-" and i + 1 < len and chars[i+1] == "-" then
+            while i < len and chars[i] != "\n" do
+                i = i + 1
+            end
+        else if c == "(" then
+            tokens.push(Token("LPAREN", "("))
+            i = i + 1
+        else if c == ")" then
+            tokens.push(Token("RPAREN", ")"))
+            i = i + 1
+        else if c == "." then
+            tokens.push(Token("DOT", "."))
+            i = i + 1
+        else if c == "," then
+            tokens.push(Token("COMMA", ","))
+            i = i + 1
+        else if c == ":" then
+            tokens.push(Token("COLON", ":"))
+            i = i + 1
+        else if c == "{" then
+            tokens.push(Token("LBRACE", "{"))
+            i = i + 1
+        else if c == "}" then
+            tokens.push(Token("RBRACE", "}"))
+            i = i + 1
+        else if c == "[" then
+            tokens.push(Token("LBRACKET", "["))
+            i = i + 1
+        else if c == "]" then
+            tokens.push(Token("RBRACKET", "]"))
+            i = i + 1
+        else if c == "+" then
+            tokens.push(Token("PLUS", "+"))
+            i = i + 1
+        else if c == "-" then
+            tokens.push(Token("MINUS", "-"))
+            i = i + 1
+        else if c == "*" then
+            tokens.push(Token("STAR", "*"))
+            i = i + 1
+        else if c == "/" then
+            tokens.push(Token("SLASH", "/"))
+            i = i + 1
+        else if c == "%" then
+            tokens.push(Token("PERCENT", "%"))
+            i = i + 1
+        else if is_digit(c) then
+            let start = i
+            while i < len and is_digit(chars[i]) do
+                i = i + 1
+            end
+            tokens.push(Token("NUMBER", source.slice(start, i)))
+        else if is_alpha(c) then
+            let start = i
+            while i < len and (is_alpha(chars[i]) or is_digit(chars[i])) do
+                i = i + 1
+            end
+            let val = source.slice(start, i)
+            let tok_type = "IDENT"
+            if val == "let" or val == "print" or val == "fn" or val == "if" or val == "then" or val == "else" or val == "end" or val == "while" or val == "do" or val == "struct" or val == "return" or val == "println" or val == "and" or val == "or" or val == "not" then
+                tok_type = "KEYWORD"
+            end
+            tokens.push(Token(tok_type, val))
+        else if c == "=" then
+            if i + 1 < len and chars[i+1] == "=" then
+                tokens.push(Token("EQUALS_EQUALS", "=="))
+                i = i + 2
+            else
+                tokens.push(Token("EQUALS", "="))
+                i = i + 1
+            end
+        else if c == "!" then
+            if i + 1 < len and chars[i+1] == "=" then
+                tokens.push(Token("NOT_EQUALS", "!="))
+                i = i + 2
+            else
+                tokens.push(Token("BANG", "!"))
+                i = i + 1
+            end
+        else if c == ">" then
+            if i + 1 < len and chars[i+1] == "=" then
+                tokens.push(Token("GREATER_EQUALS", ">="))
+                i = i + 2
+            else
+                tokens.push(Token("GREATER", ">"))
+                i = i + 1
+            end
+        else if c == "<" then
+            if i + 1 < len and chars[i+1] == "=" then
+                tokens.push(Token("LESS_EQUALS", "<="))
+                i = i + 2
+            else
+                tokens.push(Token("LESS", "<"))
+                i = i + 1
+            end
+        else if c == "\"" then
+            i = i + 1
+            let s_start = i
+            while i < len and chars[i] != "\"" do
+                if chars[i] == "\\" then
+                    i = i + 2
+                else
+                    i = i + 1
+                end
+            end
+            tokens.push(Token("STRING", source.slice(s_start, i)))
+            i = i + 1
+        else
+            i = i + 1
+        end
+    end
+    return tokens
+end
+
+-- End of Lexer
+
+fn wrap_g(code)
+    if code.length() > 2 then
+        if code.slice(0, 2) == "G_" then return "unsafe { " + code + ".clone() }" end
+    end
+    return code + ".clone()"
+end
+
+fn wrap_g_write(name, val_code)
+    if name.length() > 2 then
+        if name.slice(0, 2) == "G_" then return "unsafe { " + name + " = " + val_code + ".clone(); }" end
+    end
+    return name + " = " + val_code
+end
+
+fn p_peek()
+    if G_POS < G_NUM_TOKENS then
+        return G_TOKENS[G_POS]
+    end
+    return Token("EOF", "")
+end
+
+fn p_advance()
+    let tok = p_peek()
+    G_POS = G_POS + 1 
+    return tok
+end
+
+fn p_parse_atomic()
+    let tok = p_advance()
+    if tok.tok_type == "NUMBER" then
+        return AstNode("NUMBER", "", tok.v_val, [])
+    else if tok.tok_type == "STRING" then
+        return AstNode("STRING", "", tok.v_val, [])
+    else if tok.tok_type == "IDENT" then
+        return AstNode("IDENT", "", tok.v_val, [])
+    else if tok.tok_type == "LBRACKET" then
+        let elements = []
+        while p_peek().tok_type != "RBRACKET" and p_peek().tok_type != "EOF" do
+            elements.push(p_parse_expression())
+            if p_peek().tok_type == "COMMA" then p_advance() end
+        end
+        p_advance() -- ]
+        return AstNode("LIST", "", elements, [])
+    else if tok.tok_type == "LPAREN" then
+        let expr = p_parse_expression()
+        p_advance() -- )
+        return expr
+    else if tok.tok_type == "KEYWORD" and (tok.v_val == "else" or tok.v_val == "end") then
+        return AstNode("UNKNOWN", "BLOCK_END_" + tok.v_val, "", [])
+    end
+    return AstNode("UNKNOWN", "UNKNOWN_ATOMIC_" + tok.v_val, "", [])
+end
+
+fn p_parse_args()
+    let args = []
+    while p_peek().tok_type != "RPAREN" and p_peek().tok_type != "EOF" do
+        args.push(p_parse_expression())
+        if p_peek().tok_type == "COMMA" then p_advance() end
+    end
+    return args
+end
+
+fn p_parse_primary()
+    let expr = p_parse_atomic()
+    while 1 < 2 do
+        let next = p_peek()
+        if next.tok_type == "DOT" then
+            p_advance()
+            let field = p_advance().v_val
+            if p_peek().tok_type == "LPAREN" then
+                p_advance() -- (
+                let args = p_parse_args()
+                p_advance() -- )
+                expr = AstNode("METHOD_CALL", field, expr, args)
+            else
+                expr = AstNode("MEMBER_ACCESS", field, expr, [])
+            end
+        else if next.tok_type == "LBRACKET" then
+            p_advance()
+            let index = p_parse_expression()
+            p_advance() -- ]
+            expr = AstNode("INDEX", "", expr, [index])
+        else if next.tok_type == "LPAREN" then
+            p_advance()
+            let args = p_parse_args()
+            p_advance() -- )
+            if expr.node_type == "IDENT" then
+                expr = AstNode("CALL", expr.v_val, "", args)
+            else
+                expr = AstNode("CALL", "ANON", expr, args)
+            end
+        else if next.tok_type == "LBRACE" then
+            p_advance() -- {
+            let s_values = []
+            let s_fields = []
+            while p_peek().tok_type != "RBRACE" and p_peek().tok_type != "EOF" do
+                let f_name = p_advance().v_val
+                p_advance() -- :
+                let f_val = p_parse_expression()
+                s_fields.push(f_name)
+                s_values.push(f_val)
+                if p_peek().tok_type == "COMMA" then p_advance() end
+            end
+            p_advance() -- }
+            expr = AstNode("STRUCT_INST", expr.v_val, s_values, s_fields)
+        else
+            return expr
+        end
+    end
+end
+
+fn p_parse_unary()
+    let n2 = p_peek()
+    if n2.tok_type == "KEYWORD" and n2.v_val == "not" then
+        p_advance() -- not
+        let expr = p_parse_unary()
+        return AstNode("BINARY", "not", AstNode("NUMBER", "", "0.0", []), [expr])
+    end
+    return p_parse_primary()
+end
+
+fn p_parse_factor()
+    let val = p_parse_unary()
+    while 1 < 2 do
+        let next = p_peek()
+        let t_type = next.tok_type
+        if t_type == "STAR" or t_type == "SLASH" or t_type == "PERCENT" then
+            p_advance()
+            let op = next.v_val
+            let right = p_parse_unary()
+            val = AstNode("BINARY", op, val, [right])
+        else
+            return val
+        end
+    end
+end
+
+fn p_parse_term()
+    let val = p_parse_factor()
+    while 1 < 2 do
+        let next = p_peek()
+        let t_type = next.tok_type
+        if t_type == "PLUS" or t_type == "MINUS" then
+            p_advance()
+            let op = next.v_val
+            let right = p_parse_factor()
+            val = AstNode("BINARY", op, val, [right])
+        else
+            return val
+        end
+    end
+end
+
+fn p_parse_comparison()
+    let val = p_parse_term()
+    while 1 < 2 do
+        let next = p_peek()
+        let t_type = next.tok_type
+        if t_type == "LESS" or t_type == "GREATER" or t_type == "LESS_EQUALS" or t_type == "GREATER_EQUALS" then
+            p_advance()
+            let op = next.v_val
+            let right = p_parse_term()
+            val = AstNode("BINARY", op, val, [right])
+        else
+            return val
+        end
+    end
+end
+
+fn p_parse_equality()
+    let val = p_parse_comparison()
+    while 1 < 2 do
+        let next = p_peek()
+        let t_type = next.tok_type
+        if t_type == "EQUALS_EQUALS" or t_type == "NOT_EQUALS" then
+            p_advance()
+            let op = next.v_val
+            let right = p_parse_comparison()
+            val = AstNode("BINARY", op, val, [right])
+        else
+            return val
+        end
+    end
+end
+
+fn p_parse_and()
+    let val = p_parse_equality()
+    while 1 < 2 do
+        let next = p_peek()
+        if next.tok_type == "KEYWORD" and next.v_val == "and" then
+            p_advance()
+            let right = p_parse_equality()
+            val = AstNode("BINARY", "and", val, [right])
+        else
+            return val
+        end
+    end
+end
+
+fn p_parse_expression()
+    let val = p_parse_and()
+    while 1 < 2 do
+        let next = p_peek()
+        if next.tok_type == "KEYWORD" and next.v_val == "or" then
+            p_advance()
+            let right = p_parse_and()
+            val = AstNode("BINARY", "or", val, [right])
+        else
+            return val
+        end
+    end
+end
+
+fn p_parse_statement(depth)
+    let tok = p_peek()
+    if tok.tok_type == "KEYWORD" then
+        if tok.v_val == "let" then
+            p_advance() -- let
+            let name = p_advance().v_val
+            p_advance() -- =
+            let expr = p_parse_expression()
+            if name.length() > 2 then
+                if name.slice(0, 2) == "G_" then
+                    let exists = 0
+                    let k2 = 0
+                    while k2 < G_EMITTED.length() do
+                        if G_EMITTED[k2] == name then exists = 1 end
+                        k2 = k2 + 1
+                    end
+                    if exists == 0 then G_EMITTED.push(name) end
+                end
+            end
+            return AstNode("LET", name, expr, [])
+        else if tok.v_val == "println" or tok.v_val == "print" then
+            p_advance() -- println
+            p_advance() -- (
+            let expr = p_parse_expression()
+            p_advance() -- )
+            return AstNode("PRINT", "println", expr, [])
+        else if tok.v_val == "if" then
+            p_advance() -- if
+            let cond = p_parse_expression()
+            p_advance() -- then
+            let body = []
+            while not (p_peek().tok_type == "KEYWORD" and (p_peek().v_val == "else" or p_peek().v_val == "end")) and p_peek().tok_type != "EOF" do
+                body.push(p_parse_statement(depth + 1))
+            end
+            let else_body = []
+            if p_peek().tok_type == "KEYWORD" and p_peek().v_val == "else" then
+                p_advance() -- else
+                if p_peek().tok_type == "KEYWORD" and p_peek().v_val == "if" then
+                    else_body.push(p_parse_statement(depth + 1))
+                    return AstNode("IF", cond, body, else_body)
+                else
+                    while not (p_peek().tok_type == "KEYWORD" and p_peek().v_val == "end") and p_peek().tok_type != "EOF" do
+                        else_body.push(p_parse_statement(depth + 1))
+                    end
+                end
+            end
+            p_advance() -- end
+            return AstNode("IF", cond, body, else_body)
+        else if tok.v_val == "while" then
+            p_advance() -- while
+            let cond = p_parse_expression()
+            p_advance() -- do
+            let body = []
+            while not (p_peek().tok_type == "KEYWORD" and (p_peek().v_val == "else" or p_peek().v_val == "end")) and p_peek().tok_type != "EOF" do
+                body.push(p_parse_statement(depth + 1))
+            end
+            p_advance() -- end
+            return AstNode("WHILE", cond, body, [])
+        else if tok.v_val == "struct" then
+            p_advance() -- struct
+            let name = p_advance().v_val
+            p_advance() -- {
+            let fields = []
+            while p_peek().tok_type != "RBRACE" and p_peek().tok_type != "EOF" do
+                fields.push(p_advance().v_val)
+                if p_peek().tok_type == "COMMA" then p_advance() end
+            end
+            p_advance() -- 
+            return AstNode("STRUCT", name, fields, [])
+        else if tok.v_val == "fn" then
+            p_advance() -- fn
+            let name = p_advance().v_val
+            if p_peek().tok_type == "DOT" then
+                p_advance()
+                name = name + "." + p_advance().v_val
+            end
+            p_advance() -- (
+            let params = []
+            while p_peek().tok_type != "RPAREN" and p_peek().tok_type != "EOF" do
+                params.push(p_advance().v_val)
+                if p_peek().tok_type == "COMMA" then p_advance() end
+            end
+            p_advance() -- )
+            let body = []
+            while not (p_peek().tok_type == "KEYWORD" and (p_peek().v_val == "else" or p_peek().v_val == "end")) and p_peek().tok_type != "EOF" do
+                body.push(p_parse_statement(depth + 1))
+            end
+            p_advance() -- end
+            return AstNode("FN", name, params, body)
+        else if tok.v_val == "return" then
+            p_advance() -- return
+            let expr = p_parse_expression()
+            return AstNode("RETURN", "return", expr, [])
+        else if tok.v_val == "else" or tok.v_val == "end" then
+            return AstNode("UNKNOWN", "BLOCK_END_" + tok.v_val, "", [])
+        else
+            let t2 = p_advance()
+            return AstNode("UNKNOWN", "UNKNOWN_KW_" + t2.v_val, "", [])
+        end
+    else if tok.tok_type == "IDENT" or tok.tok_type == "STRING" or tok.tok_type == "NUMBER" or tok.tok_type == "LPAREN" or tok.tok_type == "LBRACKET" or tok.tok_type == "DOT" then
+        let target = p_parse_expression()
+        if p_peek().tok_type == "EQUALS" then
+            p_advance() -- =
+            let expr = p_parse_expression()
+            if target.node_type == "MEMBER_ACCESS" then
+                return AstNode("ASSIGN_FIELD", target.name, target.v_val, [expr])
+            else if target.node_type == "INDEX" then
+                return AstNode("ASSIGN_INDEX", "", target.v_val, [target.children[0], expr])
+            else if target.node_type == "IDENT" then
+                return AstNode("ASSIGN", target.v_val, expr, [])
+            end
+        end
+        return AstNode("EXPR", "", target, [])
+    else
+        p_advance()
+        return AstNode("UNKNOWN", "UNKNOWN", "", [])
+    end
+end
+
+fn get_prelude()
+    let p = "#![allow(warnings)]\n"
+    p = p + "use std::collections::HashMap;\n"
+    p = p + "use std::sync::{Arc, Mutex};\n"
+    p = p + "use std::fs;\n"
+    p = p + "use std::env;\n"
+    p = p + "use std::ops::*;\n\n"
+    p = p + "#[derive(Debug, Clone)]\n"
+    p = p + "pub enum LustValue {\n"
+    p = p + "    Number(f64), String(String), Boolean(bool), Null,\n"
+    p = p + "    List(Arc<Mutex<Vec<LustValue>>>),\n"
+    p = p + "    Struct(String, Arc<Mutex<HashMap<String, LustValue>>>),\n"
+    p = p + "    StructDef(String, Vec<String>),\n"
+    p = p + "}\n\n"
+    p = p + "impl PartialEq for LustValue {\n"
+    p = p + "    fn eq(&self, other: &Self) -> bool {\n"
+    p = p + "        match (self, other) {\n"
+    p = p + "            (LustValue::Number(a), LustValue::Number(b)) => a == b,\n"
+    p = p + "            (LustValue::String(a), LustValue::String(b)) => a == b,\n"
+    p = p + "            (LustValue::Boolean(a), LustValue::Boolean(b)) => a == b,\n"
+    p = p + "            (LustValue::Null, LustValue::Null) => true,\n"
+    p = p + "            (LustValue::List(a), LustValue::List(b)) => Arc::ptr_eq(a, b),\n"
+    p = p + "            (LustValue::Struct(an, a), LustValue::Struct(bn, b)) => an == bn && Arc::ptr_eq(a, b),\n"
+    p = p + "            (LustValue::StructDef(an, af), LustValue::StructDef(bn, bf)) => an == bn && af == bf,\n"
+    p = p + "            _ => false,\n"
+    p = p + "        }\n"
+    p = p + "    }\n"
+    p = p + "}\n"
+    p = p + "impl std::fmt::Display for LustValue { fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { match self { LustValue::Number(n) => write!(f, \"{}\", n), LustValue::String(s) => write!(f, \"{}\", s), LustValue::Boolean(b) => write!(f, \"{}\", b), LustValue::Null => write!(f, \"null\"), _ => write!(f, \"{:?}\", self) } } }\n"
+    p = p + "impl LustValue {\n"
+    p = p + "    fn length(&self) -> LustValue { match self { LustValue::String(s) => LustValue::Number(s.len() as f64), LustValue::List(l) => LustValue::Number(l.lock().unwrap().len() as f64), _ => LustValue::Number(0.0) } }\n\n"
+    p = p + "    fn as_bool(&self) -> bool { match self { LustValue::Boolean(b) => *b, LustValue::Null => false, _ => true } }\n"
+    p = p + "    fn to_list(&self) -> LustValue { match self { LustValue::String(s) => LustValue::List(Arc::new(Mutex::new(s.chars().map(|c| LustValue::String(c.to_string())).collect()))), _ => LustValue::Null } }\n\n"
+    p = p + "    fn slice(&self, start: &LustValue, end: &LustValue) -> LustValue { \n"
+    p = p + "        if let (LustValue::String(s), LustValue::Number(st), LustValue::Number(en)) = (self, start, end) {\n"
+    p = p + "            LustValue::String(s[*st as usize .. *en as usize].to_string())\n"
+    p = p + "        } else { LustValue::Null }\n"
+    p = p + "    }\n\n"
+    p = p + "    fn lust_eq(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self == other) }\n"
+    p = p + "    fn lust_ne(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self != other) }\n"
+    p = p + "    fn lust_lt(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self < other) }\n"
+    p = p + "    fn contains(&self, other: &LustValue) -> LustValue {\n"
+    p = p + "        if let (LustValue::String(s), LustValue::String(sub)) = (self, other) { LustValue::Boolean(s.contains(sub)) }\n"
+    p = p + "        else { LustValue::Boolean(false) }\n"
+    p = p + "    }\n\n"
+    p = p + "    fn lust_gt(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self > other) }\n"
+    p = p + "    fn lust_le(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self <= other) }\n"
+    p = p + "    fn lust_ge(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self >= other) }\n"
+    p = p + "    fn lust_and(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self.as_bool() && other.as_bool()) }\n"
+    p = p + "    fn lust_or(&self, other: &LustValue) -> LustValue { LustValue::Boolean(self.as_bool() || other.as_bool()) }\n"
+    p = p + "    fn push(&self, val: &LustValue) { if let LustValue::List(l) = self { l.lock().unwrap().push(val.clone()); } }\n"
+    p = p + "    fn get_at(&self, i: &LustValue) -> LustValue {\n"
+    p = p + "        match (self, i) {\n"
+    p = p + "            (LustValue::List(l), LustValue::Number(idx)) => {\n"
+    p = p + "                let l = l.lock().unwrap();\n"
+    p = p + "                let idx = *idx as usize;\n"
+    p = p + "                if idx < l.len() { l[idx].clone() } else { LustValue::Null }\n"
+    p = p + "            },\n"
+    p = p + "            (LustValue::String(s), LustValue::Number(idx)) => {\n"
+    p = p + "                let c = s.chars().nth(*idx as usize).unwrap_or(' ');\n"
+    p = p + "                LustValue::String(c.to_string())\n"
+    p = p + "            },\n"
+    p = p + "            _ => LustValue::Null\n"
+    p = p + "        }\n"
+    p = p + "    }\n\n"
+    p = p + "    fn set_at(&self, i: &LustValue, val: &LustValue) -> LustValue {\n"
+    p = p + "        if let (LustValue::List(l), LustValue::Number(idx)) = (self, i) {\n"
+    p = p + "            l.lock().unwrap()[*idx as usize] = val.clone();\n"
+    p = p + "        }\n"
+    p = p + "        LustValue::Null\n"
+    p = p + "    }\n"
+    p = p + "    fn get_field(&self, name: &str) -> LustValue {\n"
+    p = p + "        if let LustValue::Struct(_, fields) = self {\n"
+    p = p + "            fields.lock().unwrap().get(name).cloned().unwrap_or(LustValue::Null)\n"
+    p = p + "        } else { LustValue::Null }\n"
+    p = p + "    }\n"
+    p = p + "    \n"
+    p = p + "    fn set_field(&self, name: &str, val: &LustValue) {\n"
+    p = p + "        if let LustValue::Struct(_, fields) = self {\n"
+    p = p + "            fields.lock().unwrap().insert(name.to_string(), val.clone());\n"
+    p = p + "        }\n"
+    p = p + "    }\n"
+    p = p + "}\n\n"
+    p = p + "impl std::ops::Add for LustValue { type Output = LustValue; fn add(self, rhs: LustValue) -> LustValue { match (self, rhs) { (LustValue::Number(a), LustValue::Number(b)) => LustValue::Number(a + b), (LustValue::String(a), LustValue::String(b)) => LustValue::String(format!(\"{}{}\", a, b)), _ => LustValue::Null } } }\n"
+    p = p + "impl std::ops::Sub for LustValue { type Output = LustValue; fn sub(self, rhs: LustValue) -> LustValue { match (self, rhs) { (LustValue::Number(a), LustValue::Number(b)) => LustValue::Number(a - b), _ => LustValue::Null } } }\n"
+    p = p + "impl std::ops::Mul for LustValue { type Output = LustValue; fn mul(self, rhs: LustValue) -> LustValue { match (self, rhs) { (LustValue::Number(a), LustValue::Number(b)) => LustValue::Number(a * b), _ => LustValue::Null } } }\n"
+    p = p + "impl std::ops::Div for LustValue { type Output = LustValue; fn div(self, rhs: LustValue) -> LustValue { match (self, rhs) { (LustValue::Number(a), LustValue::Number(b)) => LustValue::Number(a / b), _ => LustValue::Null } } }\n"
+    p = p + "impl PartialOrd for LustValue {\n"
+    p = p + "    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {\n"
+    p = p + "        match (self, other) {\n"
+    p = p + "            (LustValue::Number(a), LustValue::Number(b)) => a.partial_cmp(b),\n"
+    p = p + "            (LustValue::String(a), LustValue::String(b)) => a.partial_cmp(b),\n"
+    p = p + "            _ => None,\n"
+    p = p + "        }\n"
+    p = p + "    }\n"
+    p = p + "}\n"
+    p = p + "fn to_string(v: LustValue) -> String { v.to_string() }\n"
+    p = p + "fn read_file(path: &str) -> LustValue { LustValue::String(fs::read_to_string(path).unwrap_or_else(|_| \"\".to_string())) }\n"
+    p = p + "fn write_file(path: &str, content: &str) { fs::write(path, content).ok(); }\n"
+    p = p + "fn get_args() -> LustValue {\n"
+    p = p + "    let args: Vec<LustValue> = env::args().skip(1).map(|a| LustValue::String(a)).collect();\n"
+    p = p + "    LustValue::List(Arc::new(Mutex::new(args)))\n"
+    p = p + "}\n\n"
+    return p
+end
+
+fn e_node(node)
+    return emit_rust([node], 0)
+end
+
+fn emit_rust(nodes, is_top)
+    let chunks = []
+    let i = 0
+    let node_list = nodes
+    while i < node_list.length() do
+        let node = node_list[i]
+        let output = ""
+        if node.node_type == "STRUCT" then
+            output = output + "struct " + node.name + "_ { }\n"
+            output = output + "impl " + node.name + "_ {\n"
+            output = output + "    fn new("
+            let j = 0
+            while j < node.v_val.length() do
+                output = output + node.v_val[j] + ": LustValue"
+                if j < node.v_val.length() - 1 then output = output + ", " end
+                j = j + 1
+            end
+            output = output + ") -> LustValue {\n"
+            output = output + "        let mut fields = HashMap::new();\n"
+            j = 0
+            while j < node.v_val.length() do
+                output = output + "        fields.insert(\"" + node.v_val[j] + "\".to_string(), " + node.v_val[j] + ");\n"
+                j = j + 1
+            end
+            output = output + "        LustValue::Struct(\"" + node.name + "\".to_string(), Arc::new(Mutex::new(fields)))\n"
+            output = output + "    }\n}\n"
+        else if node.node_type == "LET" then
+            let n = node.name
+            if n.length() > 2 and n.slice(0, 2) == "G_" then
+                if is_top == 1 then
+                    output = output + ""
+                else
+                    output = output + "    " + wrap_g_write(n, e_node(node.v_val)) + "\n"
+                end
+            else
+                output = output + "    let mut " + n + " = " + e_node(node.v_val) + ";\n"
+            end
+        else if node.node_type == "ASSIGN" then
+            let n = node.name
+            if n.length() > 2 and n.slice(0, 2) == "G_" then
+                if is_top == 1 then
+                    output = output + ""
+                else
+                    output = output + "    " + wrap_g_write(n, e_node(node.v_val)) + "\n"
+                end
+            else
+                output = output + "    " + n + " = " + e_node(node.v_val) + ";\n"
+            end
+        else if node.node_type == "ASSIGN_FIELD" then
+            output = output + "    " + e_node(node.v_val) + ".set_field(\"" + node.name + "\", " + e_node(node.children[0]) + ");\n"
+        else if node.node_type == "ASSIGN_INDEX" then
+            output = output + "    " + e_node(node.v_val) + ".set_at(&" + e_node(node.children[0]) + ", " + e_node(node.children[1]) + ");\n"
+        else if node.node_type == "PRINT" then
+            output = output + "    println!(\"{}\", " + e_node(node.v_val) + ");\n"
+        else if node.node_type == "FN" then
+            output = output + "fn " + node.name + "("
+            let j = 0
+            while j < node.v_val.length() do
+                output = output + node.v_val[j] + ": LustValue"
+                if j < node.v_val.length() - 1 then output = output + ", " end
+                j = j + 1
+            end
+            output = output + ") -> LustValue {\n"
+            output = output + emit_rust(node.children, 0)
+            output = output + "    LustValue::Null\n"
+            output = output + "}\n"
+        else if node.node_type == "RETURN" then
+            output = output + "    return " + e_node(node.v_val) + ";\n"
+        else if node.node_type == "IF" then
+            output = output + "    if " + e_node(node.name) + ".as_bool() {\n"
+            output = output + emit_rust(node.v_val, 0)
+            output = output + "    } else {\n"
+            output = output + emit_rust(node.children, 0)
+            output = output + "    }\n"
+        else if node.node_type == "WHILE" then
+            output = output + "    while " + e_node(node.name) + ".as_bool() {\n"
+            output = output + emit_rust(node.v_val, 0)
+            output = output + "    }\n"
+        else if node.node_type == "EXPR" then
+            output = output + "    " + e_node(node.v_val) + ";\n"
+        else if node.node_type == "BINARY" then
+            let left = e_node(node.v_val)
+            let right = e_node(node.children[0])
+            let op = node.name
+            if op == "==" then output = output + left + ".lust_eq(&" + right + ")"
+            else if op == "!=" then output = output + left + ".lust_ne(&" + right + ")"
+            else if op == "<" then output = output + left + ".lust_lt(&" + right + ")"
+            else if op == ">" then output = output + left + ".lust_gt(&" + right + ")"
+            else if op == "<=" then output = output + left + ".lust_le(&" + right + ")"
+            else if op == ">=" then output = output + left + ".lust_ge(&" + right + ")"
+            else if op == "and" then output = output + "LustValue::Boolean(" + left + ".as_bool() && " + right + ".as_bool())"
+            else if op == "or" then output = output + "LustValue::Boolean(" + left + ".as_bool() || " + right + ".as_bool())"
+            else if op == "not" then output = output + "LustValue::Boolean(!" + right + ".as_bool())"
+            else output = output + "(" + left + ".clone() " + op + " " + right + ".clone())" end
+        else if node.node_type == "IDENT" then
+            output = output + wrap_g(node.v_val)
+        else if node.node_type == "NUMBER" then
+            output = output + "LustValue::Number(" + node.v_val
+            if not node.v_val.contains(".") then output = output + ".0" end
+            output = output + ")"
+        else if node.node_type == "STRING" then
+            output = output + "LustValue::String(\"" + escape(node.v_val) + "\".to_string())"
+        else if node.node_type == "LIST" then
+            output = output + "LustValue::List(Arc::new(Mutex::new(vec!["
+            let j = 0
+            while j < node.v_val.length() do
+                output = output + e_node(node.v_val[j])
+                if j < node.v_val.length() - 1 then output = output + ", " end
+                j = j + 1
+            end
+            output = output + "])))"
+        else if node.node_type == "STRUCT_INST" then
+            output = output + node.name + "_::new("
+            let j = 0
+            while j < node.v_val.length() do
+                output = output + e_node(node.v_val[j])
+                if j < node.v_val.length() - 1 then output = output + ", " end
+                j = j + 1
+            end
+            output = output + ")"
+        else if node.node_type == "METHOD_CALL" then
+            if node.name == "to_string" then
+                output = output + "LustValue::String(" + e_node(node.v_val) + ".to_string())"
+            else
+                output = output + e_node(node.v_val) + "." + node.name + "("
+                let j = 0
+                while j < node.children.length() do
+                    output = output + "&" + e_node(node.children[j])
+                    if j < node.children.length() - 1 then output = output + ", " end
+                    j = j + 1
+                end
+                output = output + ")"
+            end
+        else if node.node_type == "MEMBER_ACCESS" then
+            output = output + e_node(node.v_val) + ".get_field(\"" + node.name + "\")"
+        else if node.node_type == "INDEX" then
+            output = output + e_node(node.v_val) + ".get_at(&" + e_node(node.children[0]) + ")"
+        else if node.node_type == "CALL" then
+            let func_name = node.name
+            if func_name == "read_file" then
+                output = output + "read_file(&" + e_node(node.children[0]) + ".to_string())"
+            else if func_name == "AstNode" then
+                output = output + "Node_::new("
+                let j = 0
+                while j < node.children.length() do
+                    output = output + e_node(node.children[j])
+                    if j < node.children.length() - 1 then output = output + ", " end
+                    j = j + 1
+                end
+                output = output + ")"
+            else
+                output = output + func_name + "("
+                let j = 0
+                while j < node.children.length() do
+                    output = output + e_node(node.children[j])
+                    if j < node.children.length() - 1 then output = output + ", " end
+                    j = j + 1
+                end
+                output = output + ")"
+            end
+        else
+            output = output + "/* UNKNOWN NODE " + node.node_type + " (" + node.name + ") */"
+        end
+        chunks.push(output)
+        i = i + 1
+    end
+    return join_list(chunks, "")
+end
+
+fn run_compiler(input_file)
+    G_EMITTED = []
+    G_NODES = []
+    let src = read_file(resolve_cli_path(input_file))
+    G_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    let tokens = lex(src)
+    G_TOKENS = tokens
+    G_NUM_TOKENS = tokens.length()
+    G_POS = 0
+
+    while G_POS < G_NUM_TOKENS do
+        let start_pos = G_POS
+        let stmt = p_parse_statement(0)
+        if G_POS == start_pos then p_advance() end
+        if stmt.node_type != "UNKNOWN" then G_NODES.push(stmt) end
+    end
+
+    let final_chunks = []
+    final_chunks.push(get_prelude())
+    
+    -- Emit Globals
+    let k = 0
+    let global_chunks = []
+    while k < G_EMITTED.length() do
+        global_chunks.push("pub static mut " + G_EMITTED[k] + ": LustValue = LustValue::Null;\n")
+        k = k + 1
+    end
+    final_chunks.push(join_list(global_chunks, ""))
+
+    -- Separate decls (FN, STRUCT, LET) from procedural logic
+    let decl_nodes = []
+    let logic_nodes = []
+    let n_idx = 0
+    while n_idx < G_NODES.length() do
+        let n = G_NODES[n_idx]
+        if n.node_type == "FN" or n.node_type == "STRUCT" or n.node_type == "LET" then
+            decl_nodes.push(n)
+        else
+            logic_nodes.push(n)
+        end
+        n_idx = n_idx + 1
+    end
+
+    final_chunks.push(emit_rust(decl_nodes, 1))
+    
+    final_chunks.push("\nfn main_logic() {\n")
+    final_chunks.push(emit_rust(logic_nodes, 0))
+    final_chunks.push("}\n")
+    
+    -- Standalone Main Driver for lustc
+    final_chunks.push("\nfn main() {\n")
+    final_chunks.push("    main_logic();\n")
+    final_chunks.push("}\n")
+    
+    println(join_list(final_chunks, ""))
+end
+
+fn main_entrypoint()
+    init_compiler()
+    let args = get_args()
+    if args.length() > 0 then
+        run_compiler(args[0])
+    else
+        println("Usage: lustc <input.lust>")
+    end
+end
+
+fn resolve_cli_path(path)
+    if path.contains("/") then
+        return path
+    end
+    return "../" + path
+end
+
+main_entrypoint()

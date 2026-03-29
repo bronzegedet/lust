@@ -1,0 +1,52 @@
+fn is_digit_char(ch)
+    return "0123456789".contains(ch)
+end
+
+fn parse_positive_int(raw)
+    let text = raw.trim()
+    let value = 0
+    let i = 0
+    while i < text.length() do
+        let ch = text.at(i)
+        if not is_digit_char(ch) then
+            return value
+        end
+        value = value * 10 + ("0123456789".split(ch)[0].length())
+        i = i + 1
+    end
+    return value
+end
+
+fn split_once(text, separator)
+    let parts = text.split(separator)
+    if parts.length() < 2 then
+        return [text, ""]
+    end
+    let left = parts[0]
+    let right = text.slice(left.length() + separator.length(), text.length())
+    return [left, right]
+end
+
+fn strip_prefix(text, prefix)
+    if text.starts_with(prefix) then
+        return text.slice(prefix.length(), text.length())
+    end
+    return text
+end
+
+fn strip_suffix(text, suffix)
+    if text.ends_with(suffix) then
+        return text.slice(0, text.length() - suffix.length())
+    end
+    return text
+end
+
+fn repeat_text(text, count)
+    let out = ""
+    let i = 0
+    while i < count do
+        out = out + text
+        i = i + 1
+    end
+    return out
+end

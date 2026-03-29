@@ -1,0 +1,125 @@
+fn normalize_slashes(path)
+    return path.replace("\\", "/")
+end
+
+fn strip_leading_slashes(path)
+    let out = path
+    while out.starts_with("/") do
+        out = out.slice(1, out.length())
+    end
+    return out
+end
+
+fn strip_trailing_slashes(path)
+    let out = path
+    while out.length() > 1 and out.ends_with("/") do
+        out = out.slice(0, out.length() - 1)
+    end
+    return out
+end
+
+fn join(left, right)
+    let a = strip_trailing_slashes(normalize_slashes(left))
+    let b = strip_leading_slashes(normalize_slashes(right))
+
+    if a == "" then
+        return b
+    end
+    if b == "" then
+        return a
+    end
+    return a + "/" + b
+end
+
+fn file_name(path)
+    let text = strip_trailing_slashes(normalize_slashes(path))
+    let parts = text.split("/")
+    if parts.length() == 0 then
+        return ""
+    end
+    return parts[parts.length() - 1]
+end
+
+fn extension(path)
+    let name = file_name(path)
+    let parts = name.split(".")
+    if parts.length() < 2 then
+        return ""
+    end
+    return parts[parts.length() - 1]
+end
+
+fn stem(path)
+    let name = file_name(path)
+    let parts = name.split(".")
+    if parts.length() < 2 then
+        return name
+    end
+
+    let out = parts[0]
+    let i = 1
+    while i < parts.length() - 1 do
+        out = out + "." + parts[i]
+        i += 1
+    end
+    return out
+end
+
+fn parent(path)
+    let text = strip_trailing_slashes(normalize_slashes(path))
+    if text == "" or text == "." then
+        return "."
+    end
+    if text == "/" then
+        return "/"
+    end
+
+    let parts = text.split("/")
+    if parts.length() <= 1 then
+        return "."
+    end
+
+    let first = parts[0]
+    let start = 0
+    let out = ""
+
+    if first == "" then
+        out = "/"
+        start = 1
+    end
+
+    let i = start
+    while i < parts.length() - 1 do
+        if parts[i] != "" then
+            if out == "" or out == "/" then
+                out = out + parts[i]
+            else
+                out = out + "/" + parts[i]
+            end
+        end
+        i += 1
+    end
+
+    if out == "" then
+        return "."
+    end
+    return out
+end
+
+fn with_extension(path, ext)
+    let clean_ext = ext
+    if clean_ext.starts_with(".") then
+        clean_ext = clean_ext.slice(1, clean_ext.length())
+    end
+    let dir = parent(path)
+    let base = stem(path)
+    let file = base
+    if clean_ext != "" then
+        file = base + "." + clean_ext
+    end
+
+    if dir == "." then
+        return file
+    end
+    return join(dir, file)
+end

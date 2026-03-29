@@ -1,0 +1,16 @@
+-- std/buffers.lust
+-- High-performance string builder.
+
+type Buffer = { _inner }
+
+fn create_buffer()
+    return Buffer { _inner: create_string_builder() }
+end
+
+fn Buffer.append(value)
+    string_builder_append(self._inner, value)
+end
+
+fn Buffer.build()
+    return string_builder_build(self._inner)
+end

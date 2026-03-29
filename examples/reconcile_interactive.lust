@@ -1,0 +1,134 @@
+import "std/strings"
+import "std/lustgex"
+
+fn resolve_filename(args)
+    if args.length() > 0 then
+        return args[0]
+    end
+    return prompt("Enter file name (e.g. Report.txt): ")
+end
+
+fn main()
+    print("--- Reconciliation ---")
+
+    let args = get_args()
+    let filename = resolve_filename(args)
+    let invoice_text = ""
+    match read_file_result(filename) do
+        case FileOk(content) then
+            invoice_text = content
+        case FileErr(_) then
+            print("ERROR: file not found or empty")
+            print(filename)
+            print("Available files:")
+            print("[Check workspace files above editor]")
+            return
+    end
+
+    let lines = invoice_text.lines()
+    let collecting_items = false
+    let items_found_count = 0
+    let order_id = ""
+    let company_name = ""
+
+    let header_pattern = "start then \"BR/ORD#\" then fewest anything then end"
+    let order_capture_pattern = "start then \"BR/ORD#\" then \"|\" then fewest anything as order_id then \"|\" then fewest anything as company then end"
+    let item_header_charge = "start then fewest anything then \"CHG%\" then fewest anything then end"
+    let item_header_quant = "start then fewest anything then \"QUANT\" then fewest anything then end"
+    let item_header_desc = "start then fewest anything then \"DESCRIPTION\" then fewest anything then end"
+    let footer_pattern = "start then \"*********\" then fewest anything then end"
+    let row_pattern = "start then fewest anything as item_code then \"|\" then fewest anything as item_desc then \"|\" then integer as system_qty then \"|\" then integer then end"
+
+    for raw_line in lines do
+        let line = raw_line.trim()
+
+        if line == "THIS CUSTOMER IS A CURRENT STANDING ACCOUNT" then
+            line = ""
+        end
+
+        if line != "" and lustgex_match(line, header_pattern) then
+            let order_match = lustgex_capture(line, order_capture_pattern)
+            if order_match != null then
+                order_id = order_match.order_id.trim()
+                company_name = order_match.company.trim()
+                print("order", order_id)
+            end
+        end
+
+        if lustgex_match(line, item_header_charge) then
+            collecting_items = true
+            print("header", "CHG%")
+        end
+        if lustgex_match(line, item_header_quant) then
+            collecting_items = true
+            print("header", "QUANT")
+        end
+        if lustgex_match(line, item_header_desc) then
+            collecting_items = true
+            print("header", "DESCRIPTION")
+        end
+
+        if collecting_items and lustgex_match(line, footer_pattern) then
+            collecting_items = false
+            print("footer", "end")
+        end
+
+        if collecting_items and line != "" then
+            let item_match = lustgex_capture(line, row_pattern)
+            if item_match != null then
+                let item_code = item_match.item_code.trim()
+                let item_desc = item_match.item_desc.trim()
+                let item_quant = item_match.system_qty.trim()
+
+                items_found_count += 1
+                clr()
+
+                print("========================================")
+                print("order", order_id)
+                print("company", company_name)
+                print("========================================")
+                print("")
+                print("product", item_desc)
+                print("code", item_code)
+                print("system_qty", item_quant)
+                print("")
+
+                let physical_quant = prompt("Enter physical invoice quantity: ")
+
+                if physical_quant == item_quant then
+                    print("match", "reconciled")
+                else
+                    print("discrepancy")
+                    print("expected", item_quant)
+                    print("entered", physical_quant)
+                    print("")
+
+                    let confirmed = "no"
+                    while confirmed != "yes" do
+                        confirmed = prompt("Type 'yes' to confirm discrepancy: ")
+                    end
+
+                    print("discrepancy", "confirmed")
+                end
+
+                print("----------------------------------------")
+                prompt("Press ENTER for next item...")
+            end
+        end
+    end
+
+    clr()
+    print("========================================")
+    print("reconciliation", "complete")
+    print("items_processed", items_found_count)
+    if items_found_count == 0 then
+        print("warning", "no items were extracted")
+        print("Possible reasons:")
+        print("1. Filename was incorrect.")
+        print("2. Header/Footer anchors don't match exactly.")
+        print("3. Data columns are shifted differently than sample.")
+    end
+    print("========================================")
+end
+
+main()

@@ -1,0 +1,69 @@
+enum BuiltinArgKind = StringArg | NumberArg | AnyArg
+
+fn infer_builtin_method_type(target_kind, name)
+    if name == "to_string" or name == "string_builder_build" then
+        return "String"
+    end
+    if name == "contains" or name == "starts_with" or name == "ends_with" or name == "is_alphabetic" or name == "is_numeric" then
+        return "Boolean"
+    end
+    if name == "length" then
+        return "Number"
+    end
+    if name == "create_string_builder" or name == "string_builder_append" then
+        return "Dynamic"
+    end
+    if target_kind == "String" and (name == "split" or name == "to_list" or name == "to_chars" or name == "lines") then
+        return "List<String>"
+    end
+    if target_kind == "String" and (name == "trim" or name == "slice" or name == "at" or name == "replace") then
+        return "String"
+    end
+    if name == "get_field" or name == "set_field" then
+        return "Dynamic"
+    end
+    return "Dynamic"
+end
+
+fn pipe_prefers_method(target_kind, name, has_struct_method)
+    if has_struct_method then
+        return true
+    end
+    return infer_builtin_method_type(target_kind, name) != "Dynamic"
+end
+
+fn builtin_method_requires_string_receiver(name)
+    if name == "trim" or name == "slice" or name == "at" or name == "split" or name == "contains" or name == "to_list" or name == "lines" or name == "starts_with" or name == "ends_with" or name == "replace" or name == "is_alphabetic" or name == "is_numeric" then
+        return true
+    end
+    return false
+end
+
+fn builtin_method_arg_kinds(name)
+    if name == "to_string" or name == "length" or name == "trim" or name == "to_list" or name == "to_chars" or name == "lines" or name == "is_alphabetic" or name == "is_numeric" then
+        return []
+    end
+    if name == "at" then
+        return [NumberArg]
+    end
+    if name == "slice" then
+        return [NumberArg, NumberArg]
+    end
+    if name == "contains" or name == "split" or name == "starts_with" or name == "ends_with" then
+        return [StringArg]
+    end
+    if name == "replace" then
+        return [StringArg, StringArg]
+    end
+    if name == "get_field" then
+        return [StringArg]
+    end
+    if name == "set_field" then
+        return [StringArg, AnyArg]
+    end
+    return null
+end
+
+fn is_builtin_method(name)
+    return builtin_method_arg_kinds(name) != null
+end

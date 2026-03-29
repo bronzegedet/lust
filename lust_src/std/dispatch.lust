@@ -1,0 +1,124 @@
+enum BuiltinMethodKind = ToString | Length | Trim | At | Slice | Contains | Split | ToList | Lines | StartsWith | EndsWith | Replace
+
+enum MethodDispatch = ListPush | Builtin(kind) | StructMethod(key) | DynamicValueMethod
+
+fn builtin_method_kind(name)
+    let names = ["to_string", "length", "trim", "at", "slice", "contains", "split", "to_list", "lines", "starts_with", "ends_with", "replace"]
+    let kinds = [ToString, Length, Trim, At, Slice, Contains, Split, ToList, Lines, StartsWith, EndsWith, Replace]
+    let i = 0
+    while i < names.length() do
+        if name == names[i] then
+            return kinds[i]
+        end
+        i = i + 1
+    end
+    return null
+end
+
+fn builtin_method_expected_args(kind)
+    match kind do
+        case ToString then
+            return 0
+        case Length then
+            return 0
+        case Trim then
+            return 0
+        case ToList then
+            return 0
+        case Lines then
+            return 0
+        case At then
+            return 1
+        case Contains then
+            return 1
+        case Split then
+            return 1
+        case StartsWith then
+            return 1
+        case EndsWith then
+            return 1
+        case Slice then
+            return 2
+        case Replace then
+            return 2
+        case _ then
+            return 0
+    end
+end
+
+fn builtin_method_vm_name(kind)
+    match kind do
+        case ToString then
+            return "to_string"
+        case Trim then
+            return "__str_trim"
+        case At then
+            return "__str_at"
+        case Slice then
+            return "__str_slice"
+        case Contains then
+            return "__str_contains"
+        case Split then
+            return "__str_split"
+        case ToList then
+            return "__str_to_list"
+        case Lines then
+            return "__str_lines"
+        case StartsWith then
+            return "__str_starts_with"
+        case EndsWith then
+            return "__str_ends_with"
+        case Replace then
+            return "__str_replace"
+        case _ then
+            return null
+    end
+end
+
+fn infer_call_type(name)
+    if name == "sin" or name == "cos" or name == "sqrt" or name == "abs" or name == "random_int" or name == "random_float" or name == "now" or name == "to_number" then
+        return "Number"
+    end
+    if name == "get_key" then
+        return "Enum:Key"
+    end
+    if name == "poll_key" then
+        return "Dynamic"
+    end
+    if name == "live" then
+        return "Boolean"
+    end
+    if name == "to_string" or name == "type_of" or name == "read_file" or name == "json_encode" or name == "json_decode" or name == "compile_lustgex" or name == "get_env" then
+        return "String"
+    end
+    if name == "lustgex_match" then
+        return "Boolean"
+    end
+    if name == "regex_capture" then
+        return "Dynamic"
+    end
+    if name == "launch_lust" then
+        return "Number"
+    end
+    if name == "open_file" then
+        return "Dynamic"
+    end
+    if name == "debug" or name == "panic" or name == "assert" then
+        return "Dynamic"
+    end
+    return "Dynamic"
+end
+
+fn classify_method_call(target_kind, name, has_struct_method)
+    if name == "push" then
+        return ListPush
+    end
+    let kind = builtin_method_kind(name)
+    if kind == null then
+        if target_kind == "Struct" and has_struct_method then
+            return StructMethod(name)
+        end
+        return DynamicValueMethod
+    end
+    return Builtin(kind)
+end

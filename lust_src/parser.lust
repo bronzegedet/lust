@@ -1,0 +1,3067 @@
+type Tok = { kind: String, text: String, line: Number }
+type Node = { kind: String, value: String, kids: Dynamic, names: Dynamic }
+type ParserState = { tokens: Dynamic, pos: Number }
+type Scan = { text, pos, line }
+type Analysis = { type_names, type_fields, fn_names, fn_arities, method_owners, method_names, method_arities, variant_names, variant_arities, errors }
+type EvalBox = { ok: Number, value: Dynamic }
+type EvalState = { names: Dynamic, values: Dynamic, returned: Number, value: Dynamic, ok: Number }
+type StructValue = { tag: String, names: Dynamic, values: Dynamic, enum_name: String, variant: String }
+type EnumValue = { enum_name: String, variant: String, values: Dynamic, tag: String, names: Dynamic }
+type PatternBindings = { names: Dynamic, types: Dynamic, depths: Dynamic }
+type MatchBindings = { names: Dynamic, values: Dynamic }
+
+fn Token(kind: String, text: String, line: Number) -> Tok
+    return Tok { kind: kind, text: text, line: line }
+end
+
+fn Ast(kind: String, value: String, kids: Dynamic, names: Dynamic) -> Node
+    return Node { kind: kind, value: value, kids: kids, names: names }
+end
+
+fn Parser(tokens: Dynamic) -> ParserState
+    return ParserState { tokens: tokens, pos: 0 }
+end
+
+fn ScanResult(text, pos, line)
+    return Scan { text: text, pos: pos, line: line }
+end
+
+fn AnalysisInfo(type_names, type_fields, fn_names, fn_arities, method_owners, method_names, method_arities, variant_names, variant_arities, errors)
+    return Analysis {
+        type_names: type_names,
+        type_fields: type_fields,
+        fn_names: fn_names,
+        fn_arities: fn_arities,
+        method_owners: method_owners,
+        method_names: method_names,
+        method_arities: method_arities,
+        variant_names: variant_names,
+        variant_arities: variant_arities,
+        errors: errors
+    }
+end
+
+fn EvalResult(ok: Number, value: Dynamic) -> EvalBox
+    return EvalBox { ok: ok, value: value }
+end
+
+fn EvalStateInfo(names: Dynamic, values: Dynamic, returned: Number, value: Dynamic, ok: Number) -> EvalState
+    return EvalState { names: names, values: values, returned: returned, value: value, ok: ok }
+end
+
+fn StructVal(tag: String, names: Dynamic, values: Dynamic) -> StructValue
+    return StructValue { tag: tag, names: names, values: values, enum_name: "", variant: "" }
+end
+
+fn EnumVal(enum_name: String, variant: String, values: Dynamic) -> EnumValue
+    return EnumValue { enum_name: enum_name, variant: variant, values: values, tag: "", names: [] }
+end
+
+fn PatternBindingInfo(names: Dynamic, types: Dynamic, depths: Dynamic) -> PatternBindings
+    return PatternBindings { names: names, types: types, depths: depths }
+end
+
+fn MatchBindingInfo(names: Dynamic, values: Dynamic) -> MatchBindings
+    return MatchBindings { names: names, values: values }
+end
+
+fn is_alpha(ch)
+    return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_".contains(ch)
+end
+
+fn is_digit(ch)
+    return "0123456789".contains(ch)
+end
+
+fn is_alnum(ch)
+    return is_alpha(ch) or is_digit(ch)
+end
+
+fn is_space(ch)
+    return ch == " " or ch == "\t" or ch == "\r" or ch == "\n"
+end
+
+fn decode_escape(ch)
+    if ch == "n" then
+        return "\n"
+    end
+    if ch == "r" then
+        return "\r"
+    end
+    if ch == "t" then
+        return "\t"
+    end
+    if ch == "\"" then
+        return "\""
+    end
+    if ch == "\\" then
+        return "\\"
+    end
+    return ch
+end
+
+fn keyword_kind(text)
+    if text == "fn" then
+        return "Fn"
+    end
+    if text == "import" then
+        return "Import"
+    end
+    if text == "enum" then
+        return "Enum"
+    end
+    if text == "match" then
+        return "Match"
+    end
+    if text == "case" then
+        return "Case"
+    end
+    if text == "type" then
+        return "Type"
+    end
+    if text == "struct" then
+        return "Struct"
+    end
+    if text == "if" then
+        return "If"
+    end
+    if text == "then" then
+        return "Then"
+    end
+    if text == "else" then
+        return "Else"
+    end
+    if text == "let" then
+        return "Let"
+    end
+    if text == "return" then
+        return "Return"
+    end
+    if text == "while" then
+        return "While"
+    end
+    if text == "do" then
+        return "Do"
+    end
+    if text == "print" then
+        return "Print"
+    end
+    if text == "and" then
+        return "And"
+    end
+    if text == "or" then
+        return "Or"
+    end
+    if text == "not" then
+        return "Not"
+    end
+    if text == "end" then
+        return "End"
+    end
+    return "Ident"
+end
+
+fn single_kind(ch)
+    if ch == "(" then
+        return "LParen"
+    end
+    if ch == ")" then
+        return "RParen"
+    end
+    if ch == "{" then
+        return "LBrace"
+    end
+    if ch == "}" then
+        return "RBrace"
+    end
+    if ch == "[" then
+        return "LBracket"
+    end
+    if ch == "]" then
+        return "RBracket"
+    end
+    if ch == ":" then
+        return "Colon"
+    end
+    if ch == "," then
+        return "Comma"
+    end
+    if ch == "|" then
+        return "Pipe"
+    end
+    if ch == "." then
+        return "Dot"
+    end
+    if ch == "+" then
+        return "Plus"
+    end
+    if ch == "-" then
+        return "Minus"
+    end
+    if ch == "*" then
+        return "Star"
+    end
+    if ch == "/" then
+        return "Slash"
+    end
+    if ch == ">" then
+        return "Gt"
+    end
+    if ch == "<" then
+        return "Lt"
+    end
+    if ch == "=" then
+        return "Equals"
+    end
+    return ""
+end
+
+fn scan_string(source, start, line)
+    let pos = start + 1
+    let out = ""
+    let current_line = line
+    let len = source.length()
+    while pos < len and source.at(pos) != "\"" do
+        let ch = source.at(pos)
+        if ch == "\\" and pos + 1 < len then
+            out = out + decode_escape(source.at(pos + 1))
+            pos = pos + 2
+        else
+            if ch == "\n" then
+                current_line = current_line + 1
+            end
+            out = out + ch
+            pos = pos + 1
+        end
+    end
+    if pos < len and source.at(pos) == "\"" then
+        pos = pos + 1
+    end
+    return ScanResult(out, pos, current_line)
+end
+
+fn scan_number(source, start)
+    let pos = start
+    let len = source.length()
+    while pos < len and (is_digit(source.at(pos)) or source.at(pos) == ".") do
+        pos = pos + 1
+    end
+    return ScanResult(source.slice(start, pos), pos, 0)
+end
+
+fn scan_ident(source, start)
+    let pos = start
+    let len = source.length()
+    while pos < len and is_alnum(source.at(pos)) do
+        pos = pos + 1
+    end
+    return ScanResult(source.slice(start, pos), pos, 0)
+end
+
+fn lex(source)
+    let tokens = []
+    let pos = 0
+    let line = 1
+    let len = source.length()
+
+    while pos < len do
+        let ch = source.at(pos)
+        let line_at_token = line
+        let handled = 0
+
+        if is_space(ch) then
+            if ch == "\n" then
+                line = line + 1
+            end
+            pos = pos + 1
+            handled = 1
+        end
+
+        if handled == 0 and ch == "/" and pos + 1 < len and source.at(pos + 1) == "/" then
+            pos = pos + 2
+            while pos < len and source.at(pos) != "\n" do
+                pos = pos + 1
+            end
+            handled = 1
+        end
+
+        if handled == 0 and ch == "-" and pos + 1 < len and source.at(pos + 1) == "-" then
+            pos = pos + 2
+            while pos < len and source.at(pos) != "\n" do
+                pos = pos + 1
+            end
+            handled = 1
+        end
+
+        if handled == 0 and ch == "\"" then
+            let scanned = scan_string(source, pos, line)
+            pos = scanned.pos
+            line = scanned.line
+            tokens.push(Token("StringLit", scanned.text, line_at_token))
+            handled = 1
+        end
+
+        if handled == 0 and ch == "=" and pos + 1 < len and source.at(pos + 1) == "=" then
+            tokens.push(Token("Eq", "==", line_at_token))
+            pos = pos + 2
+            handled = 1
+        end
+
+        if handled == 0 and ch == "!" and pos + 1 < len and source.at(pos + 1) == "=" then
+            tokens.push(Token("Ne", "!=", line_at_token))
+            pos = pos + 2
+            handled = 1
+        end
+
+        if handled == 0 and ch == ">" and pos + 1 < len and source.at(pos + 1) == "=" then
+            tokens.push(Token("Ge", ">=", line_at_token))
+            pos = pos + 2
+            handled = 1
+        end
+
+        if handled == 0 and ch == "<" and pos + 1 < len and source.at(pos + 1) == "=" then
+            tokens.push(Token("Le", "<=", line_at_token))
+            pos = pos + 2
+            handled = 1
+        end
+
+        if handled == 0 and is_digit(ch) then
+            let scanned = scan_number(source, pos)
+            pos = scanned.pos
+            tokens.push(Token("Number", scanned.text, line_at_token))
+            handled = 1
+        end
+
+        if handled == 0 and is_alpha(ch) then
+            let scanned = scan_ident(source, pos)
+            pos = scanned.pos
+            tokens.push(Token(keyword_kind(scanned.text), scanned.text, line_at_token))
+            handled = 1
+        end
+
+        if handled == 0 then
+            let kind = single_kind(ch)
+            if kind != "" then
+                tokens.push(Token(kind, ch, line_at_token))
+                pos = pos + 1
+                handled = 1
+            end
+        end
+
+        if handled == 0 then
+            pos = pos + 1
+        end
+    end
+
+    return tokens
+end
+
+fn p_done(p)
+    return p.pos >= p.tokens.length()
+end
+
+fn p_peek(p)
+    if p_done(p) then
+        return Token("EOF", "", 0)
+    end
+    return p.tokens[p.pos]
+end
+
+fn p_peek_kind(p)
+    return p_peek(p).kind
+end
+
+fn p_advance(p)
+    let tok = p_peek(p)
+    p.pos = p.pos + 1
+    return tok
+end
+
+fn p_expect(p, kind)
+    let tok = p_peek(p)
+    if tok.kind != kind then
+        print("parse error on line " + to_string(tok.line) + ": expected " + kind + ", got " + tok.kind)
+    end
+    return p_advance(p)
+end
+
+fn p_parse_program(p)
+    let items = []
+    while not p_done(p) do
+        items.push(p_parse_decl_or_stmt(p))
+    end
+    return Ast("Program", "", items, [])
+end
+
+fn p_parse_decl_or_stmt(p)
+    if p_peek_kind(p) == "Fn" then
+        return p_parse_fn(p)
+    end
+    if p_peek_kind(p) == "Import" then
+        return p_parse_import(p)
+    end
+    if p_peek_kind(p) == "Enum" then
+        return p_parse_enum_decl(p)
+    end
+    if p_peek_kind(p) == "Type" or p_peek_kind(p) == "Struct" then
+        return p_parse_type_decl(p)
+    end
+    return p_parse_stmt(p)
+end
+
+fn p_parse_import(p)
+    p_expect(p, "Import")
+    let path = p_expect(p, "StringLit").text
+    return Ast("Import", path, [], [])
+end
+
+fn p_parse_enum_decl(p)
+    p_expect(p, "Enum")
+    let name = p_expect(p, "Ident").text
+    if p_peek_kind(p) == "Equals" then
+        p_advance(p)
+    end
+    let variants = []
+    while p_peek_kind(p) != "EOF" do
+        let variant_name = p_expect(p, "Ident").text
+        let fields = []
+        if p_peek_kind(p) == "LParen" then
+            p_advance(p)
+            while p_peek_kind(p) != "RParen" and p_peek_kind(p) != "EOF" do
+                fields.push(p_expect(p, "Ident").text)
+                if p_peek_kind(p) == "Comma" then
+                    p_advance(p)
+                end
+            end
+            p_expect(p, "RParen")
+        end
+        variants.push(Ast("Variant", variant_name, [], fields))
+        if p_peek_kind(p) == "Pipe" then
+            p_advance(p)
+        else
+            return Ast("Enum", name, [Ast("Variants", "", variants, [])], [])
+        end
+    end
+    return Ast("Enum", name, [Ast("Variants", "", variants, [])], [])
+end
+
+fn p_parse_type_decl(p)
+    let kind = p_advance(p).kind
+    let name = p_expect(p, "Ident").text
+    if kind == "Type" and p_peek_kind(p) == "Equals" then
+        p_advance(p)
+    end
+    p_expect(p, "LBrace")
+    let fields = []
+    while p_peek_kind(p) != "RBrace" and p_peek_kind(p) != "EOF" do
+        fields.push(p_expect(p, "Ident").text)
+        if p_peek_kind(p) == "Comma" then
+            p_advance(p)
+        end
+    end
+    p_expect(p, "RBrace")
+    return Ast(kind, name, [Ast("Fields", "", [], fields)], [])
+end
+
+fn p_parse_fn(p)
+    p_expect(p, "Fn")
+    let name = p_expect(p, "Ident").text
+    let full_name = name
+    if p_peek_kind(p) == "Dot" then
+        p_advance(p)
+        full_name = full_name + "." + p_expect(p, "Ident").text
+    end
+    p_expect(p, "LParen")
+    let params = []
+    while p_peek_kind(p) != "RParen" and p_peek_kind(p) != "EOF" do
+        params.push(p_expect(p, "Ident").text)
+        if p_peek_kind(p) == "Comma" then
+            p_advance(p)
+        end
+    end
+    p_expect(p, "RParen")
+    let body = []
+    while p_peek_kind(p) != "End" and p_peek_kind(p) != "EOF" do
+        body.push(p_parse_stmt(p))
+    end
+    p_expect(p, "End")
+    return Ast("Fn", full_name, [Ast("Params", "", [], params), Ast("Block", "", body, [])], [])
+end
+
+fn p_parse_stmt(p)
+    if p_peek_kind(p) == "Let" then
+        p_advance(p)
+        let name = p_expect(p, "Ident").text
+        p_expect(p, "Equals")
+        return Ast("Let", name, [p_parse_expr(p)], [])
+    end
+    if p_peek_kind(p) == "If" then
+        p_advance(p)
+        let cond = p_parse_expr(p)
+        p_expect(p, "Then")
+        let then_body = []
+        while p_peek_kind(p) != "End" and p_peek_kind(p) != "Else" and p_peek_kind(p) != "EOF" do
+            then_body.push(p_parse_stmt(p))
+        end
+        let kids = [cond, Ast("Block", "", then_body, [])]
+        if p_peek_kind(p) == "Else" then
+            p_advance(p)
+            let else_body = []
+            while p_peek_kind(p) != "End" and p_peek_kind(p) != "EOF" do
+                else_body.push(p_parse_stmt(p))
+            end
+            kids.push(Ast("Block", "", else_body, []))
+        end
+        p_expect(p, "End")
+        return Ast("If", "", kids, [])
+    end
+    if p_peek_kind(p) == "Return" then
+        p_advance(p)
+        return Ast("Return", "", [p_parse_expr(p)], [])
+    end
+    if p_peek_kind(p) == "While" then
+        p_advance(p)
+        let cond = p_parse_expr(p)
+        p_expect(p, "Do")
+        let body = []
+        while p_peek_kind(p) != "End" and p_peek_kind(p) != "EOF" do
+            body.push(p_parse_stmt(p))
+        end
+        p_expect(p, "End")
+        return Ast("While", "", [cond, Ast("Block", "", body, [])], [])
+    end
+    if p_peek_kind(p) == "Match" then
+        p_advance(p)
+        let target = p_parse_expr(p)
+        p_expect(p, "Do")
+        let cases = []
+        while p_peek_kind(p) == "Case" do
+            p_advance(p)
+            let pattern = p_parse_pattern(p)
+            let guard = Ast("NoGuard", "", [], [])
+            if p_peek_kind(p) == "If" then
+                p_advance(p)
+                guard = p_parse_expr(p)
+            end
+            p_expect(p, "Then")
+            let body = []
+            while p_peek_kind(p) != "Case" and p_peek_kind(p) != "End" and p_peek_kind(p) != "EOF" do
+                body.push(p_parse_stmt(p))
+            end
+            cases.push(Ast("Case", "", [pattern, Ast("Guard", "", [guard], []), Ast("Block", "", body, [])], []))
+        end
+        p_expect(p, "End")
+        return Ast("Match", "", [target, Ast("Cases", "", cases, [])], [])
+    end
+    if p_peek_kind(p) == "Print" then
+        p_advance(p)
+        p_expect(p, "LParen")
+        let args = p_parse_arg_list(p)
+        p_expect(p, "RParen")
+        return Ast("Print", "", args, [])
+    end
+
+    let expr = p_parse_expr(p)
+    if p_peek_kind(p) == "Equals" then
+        p_advance(p)
+        return Ast("Assign", "", [expr, p_parse_expr(p)], [])
+    end
+    return Ast("ExprStmt", "", [expr], [])
+end
+
+fn p_parse_arg_list(p)
+    let args = []
+    while p_peek_kind(p) != "RParen" and p_peek_kind(p) != "EOF" do
+        args.push(p_parse_expr(p))
+        if p_peek_kind(p) == "Comma" then
+            p_advance(p)
+        end
+    end
+    return args
+end
+
+fn p_parse_list_items(p)
+    let items = []
+    while p_peek_kind(p) != "RBracket" and p_peek_kind(p) != "EOF" do
+        items.push(p_parse_expr(p))
+        if p_peek_kind(p) == "Comma" then
+            p_advance(p)
+        end
+    end
+    return items
+end
+
+fn p_parse_struct_fields(p)
+    let fields = []
+    let names = []
+    while p_peek_kind(p) != "RBrace" and p_peek_kind(p) != "EOF" do
+        let name = p_expect(p, "Ident").text
+        p_expect(p, "Colon")
+        fields.push(p_parse_expr(p))
+        names.push(name)
+        if p_peek_kind(p) == "Comma" then
+            p_advance(p)
+        end
+    end
+    return Ast("Fields", "", fields, names)
+end
+
+fn p_parse_pattern_fields(p)
+    let fields = []
+    let names = []
+    while p_peek_kind(p) != "RBrace" and p_peek_kind(p) != "EOF" do
+        let name = p_expect(p, "Ident").text
+        p_expect(p, "Colon")
+        fields.push(p_parse_pattern(p))
+        names.push(name)
+        if p_peek_kind(p) == "Comma" then
+            p_advance(p)
+        end
+    end
+    return Ast("PatternFields", "", fields, names)
+end
+
+fn p_parse_pattern(p)
+    let tok = p_peek(p)
+    if tok.kind == "Number" then
+        p_advance(p)
+        return Ast("PatternNumber", tok.text, [], [])
+    end
+    if tok.kind == "StringLit" then
+        p_advance(p)
+        return Ast("PatternString", tok.text, [], [])
+    end
+    if tok.kind == "Ident" then
+        p_advance(p)
+        if p_peek_kind(p) == "LParen" then
+            p_advance(p)
+            let parts = []
+            while p_peek_kind(p) != "RParen" and p_peek_kind(p) != "EOF" do
+                parts.push(p_parse_pattern(p))
+                if p_peek_kind(p) == "Comma" then
+                    p_advance(p)
+                end
+            end
+            p_expect(p, "RParen")
+            return Ast("PatternCall", tok.text, parts, [])
+        end
+        if p_peek_kind(p) == "LBrace" then
+            p_advance(p)
+            let fields = p_parse_pattern_fields(p)
+            p_expect(p, "RBrace")
+            return Ast("PatternStruct", tok.text, fields.kids, fields.names)
+        end
+        return Ast("PatternIdent", tok.text, [], [])
+    end
+    p_advance(p)
+    return Ast("PatternError", tok.text, [], [])
+end
+
+fn p_parse_expr(p)
+    return p_parse_logic_or(p)
+end
+
+fn p_parse_logic_or(p)
+    let expr = p_parse_logic_and(p)
+    while p_peek_kind(p) == "Or" do
+        let op = p_advance(p).text
+        expr = Ast("Binary", op, [expr, p_parse_logic_and(p)], [])
+    end
+    return expr
+end
+
+fn p_parse_logic_and(p)
+    let expr = p_parse_equality(p)
+    while p_peek_kind(p) == "And" do
+        let op = p_advance(p).text
+        expr = Ast("Binary", op, [expr, p_parse_equality(p)], [])
+    end
+    return expr
+end
+
+fn p_parse_equality(p)
+    let expr = p_parse_comparison(p)
+    while p_peek_kind(p) == "Eq" or p_peek_kind(p) == "Ne" do
+        let op = p_advance(p).text
+        expr = Ast("Binary", op, [expr, p_parse_comparison(p)], [])
+    end
+    return expr
+end
+
+fn p_parse_comparison(p)
+    let expr = p_parse_term(p)
+    while p_peek_kind(p) == "Gt" or p_peek_kind(p) == "Lt" or p_peek_kind(p) == "Ge" or p_peek_kind(p) == "Le" do
+        let op = p_advance(p).text
+        expr = Ast("Binary", op, [expr, p_parse_term(p)], [])
+    end
+    return expr
+end
+
+fn p_parse_term(p)
+    let expr = p_parse_factor(p)
+    while p_peek_kind(p) == "Plus" or p_peek_kind(p) == "Minus" do
+        let op = p_advance(p).text
+        expr = Ast("Binary", op, [expr, p_parse_factor(p)], [])
+    end
+    return expr
+end
+
+fn p_parse_factor(p)
+    let expr = p_parse_unary(p)
+    while p_peek_kind(p) == "Star" or p_peek_kind(p) == "Slash" do
+        let op = p_advance(p).text
+        expr = Ast("Binary", op, [expr, p_parse_unary(p)], [])
+    end
+    return expr
+end
+
+fn p_parse_unary(p)
+    if p_peek_kind(p) == "Not" or p_peek_kind(p) == "Minus" then
+        let op = p_advance(p).text
+        return Ast("Unary", op, [p_parse_unary(p)], [])
+    end
+    return p_parse_primary(p)
+end
+
+fn p_parse_primary(p)
+    let expr = Ast("Error", "", [], [])
+    let tok = p_peek(p)
+    let matched = 0
+
+    if tok.kind == "Number" then
+        p_advance(p)
+        expr = Ast("Number", tok.text, [], [])
+        matched = 1
+    end
+    if matched == 0 and tok.kind == "StringLit" then
+        p_advance(p)
+        expr = Ast("String", tok.text, [], [])
+        matched = 1
+    end
+    if matched == 0 and tok.kind == "Ident" then
+        p_advance(p)
+        expr = Ast("Ident", tok.text, [], [])
+        matched = 1
+    end
+    if matched == 0 and tok.kind == "LBracket" then
+        p_advance(p)
+        let items = p_parse_list_items(p)
+        p_expect(p, "RBracket")
+        expr = Ast("List", "", items, [])
+        matched = 1
+    end
+    if matched == 0 and tok.kind == "LParen" then
+        p_advance(p)
+        expr = p_parse_expr(p)
+        p_expect(p, "RParen")
+        matched = 1
+    end
+    if matched == 0 then
+        print("parse error on line " + to_string(tok.line) + ": unexpected token " + tok.kind)
+        p_advance(p)
+    end
+    while p_peek_kind(p) == "LParen" or p_peek_kind(p) == "Dot" or p_peek_kind(p) == "LBracket" or p_peek_kind(p) == "LBrace" do
+        if p_peek_kind(p) == "LParen" then
+            p_advance(p)
+            let args = p_parse_arg_list(p)
+            p_expect(p, "RParen")
+            if expr.kind == "Member" then
+                let kids = [expr.kids[0]]
+                let i = 0
+                while i < args.length() do
+                    kids.push(args[i])
+                    i = i + 1
+                end
+                expr = Ast("MethodCall", expr.value, kids, [])
+            else
+                if expr.kind == "Ident" then
+                    expr = Ast("Call", expr.value, args, [])
+                else
+                    let kids = [expr]
+                    let i = 0
+                    while i < args.length() do
+                        kids.push(args[i])
+                        i = i + 1
+                    end
+                    expr = Ast("CallExpr", "", kids, [])
+                end
+            end
+        else
+            if p_peek_kind(p) == "Dot" then
+                p_advance(p)
+                let field = p_expect(p, "Ident").text
+                expr = Ast("Member", field, [expr], [])
+            else
+                if p_peek_kind(p) == "LBrace" and expr.kind == "Ident" then
+                    p_advance(p)
+                    let field_node = p_parse_struct_fields(p)
+                    p_expect(p, "RBrace")
+                    expr = Ast("StructLit", expr.value, field_node.kids, field_node.names)
+                else
+                    p_advance(p)
+                    let index = p_parse_expr(p)
+                    p_expect(p, "RBracket")
+                    expr = Ast("Index", "", [expr, index], [])
+                end
+            end
+        end
+    end
+    return expr
+end
+
+fn validate_ast(program)
+    let pending = [program]
+    let errors = []
+    while pending.length() > 0 do
+        let node = pending[0]
+        let next = []
+        let rest_idx = 1
+        while rest_idx < pending.length() do
+            next.push(pending[rest_idx])
+            rest_idx = rest_idx + 1
+        end
+
+        if node.kind == "Error" or node.kind == "PatternError" then
+            errors.push("unexpected " + node.kind + " node")
+        end
+
+        if node.kind == "Fn" then
+            if node.kids.length() != 2 then
+                errors.push("Fn node must have Params and Block children")
+            else
+                if node.kids[0].kind != "Params" then
+                    errors.push("Fn first child must be Params")
+                end
+                if node.kids[1].kind != "Block" then
+                    errors.push("Fn second child must be Block")
+                end
+            end
+        end
+
+        if node.kind == "Type" or node.kind == "Struct" then
+            if node.kids.length() != 1 or node.kids[0].kind != "Fields" then
+                errors.push(node.kind + " node must have one Fields child")
+            end
+        end
+
+        if node.kind == "Enum" then
+            if node.kids.length() != 1 or node.kids[0].kind != "Variants" then
+                errors.push("Enum node must have one Variants child")
+            end
+        end
+
+        if node.kind == "Match" then
+            if node.kids.length() != 2 then
+                errors.push("Match node must have target and Cases children")
+            else
+                if node.kids[1].kind != "Cases" then
+                    errors.push("Match second child must be Cases")
+                end
+            end
+        end
+
+        if node.kind == "Case" then
+            if node.kids.length() != 3 then
+                errors.push("Case node must have pattern, guard, and block children")
+            else
+                if node.kids[1].kind != "Guard" then
+                    errors.push("Case second child must be Guard")
+                end
+                if node.kids[2].kind != "Block" then
+                    errors.push("Case third child must be Block")
+                end
+            end
+        end
+
+        let child_idx = node.kids.length() - 1
+        while child_idx >= 0 do
+            next.push(node.kids[child_idx])
+            child_idx = child_idx - 1
+        end
+        pending = next
+    end
+    return errors
+end
+
+fn list_contains(items, value: String) -> Number
+    let idx = 0
+    while idx < items.length() do
+        if items[idx] == value then
+            return 1
+        end
+        idx = idx + 1
+    end
+    return 0
+end
+
+fn find_dot(text: String) -> Number
+    let idx = 0
+    while idx < text.length() do
+        if text.at(idx) == "." then
+            return idx
+        end
+        idx = idx + 1
+    end
+    return -1
+end
+
+fn name_prefix(text: String, dot_idx: Number) -> String
+    if dot_idx < 0 then
+        return text
+    end
+    return text.slice(0, dot_idx)
+end
+
+fn has_duplicate_names(items) -> String
+    let outer = 0
+    while outer < items.length() do
+        let inner = outer + 1
+        while inner < items.length() do
+            if items[outer] == items[inner] then
+                return items[outer]
+            end
+            inner = inner + 1
+        end
+        outer = outer + 1
+    end
+    return ""
+end
+
+fn count_methods(fn_names) -> Number
+    let idx = 0
+    let total = 0
+    while idx < fn_names.length() do
+        if find_dot(fn_names[idx]) >= 0 then
+            total = total + 1
+        end
+        idx = idx + 1
+    end
+    return total
+end
+
+fn is_builtin_global(name)
+    if name == "to_string" or name == "to_number" or name == "type_of" or name == "sin" or name == "cos" or name == "sqrt" or name == "abs" or name == "random_int" or name == "random_float" or name == "read_file" or name == "write_file" or name == "open_file" or name == "get_args" or name == "launch_lust" or name == "get_env" or name == "get_key" or name == "poll_key" or name == "input" or name == "json_encode" or name == "json_decode" or name == "compile_lustgex" or name == "lustgex_match" or name == "sleep" or name == "panic" or name == "assert" or name == "debug" or name == "window" or name == "live" or name == "clear_screen" or name == "circle" or name == "rect" or name == "line" or name == "triangle" or name == "text" or name == "red" or name == "green" or name == "blue" or name == "white" or name == "black" or name == "dark_gray" or name == "neon_pink" then
+        return 1
+    end
+    return 0
+end
+
+fn find_type_decl(program: Node, type_name: String) -> Node
+    let item_idx = 0
+    while item_idx < program.kids.length() do
+        let item = program.kids[item_idx]
+        if (item.kind == "Type" or item.kind == "Struct") and item.value == type_name then
+            return item
+        end
+        item_idx = item_idx + 1
+    end
+    return Ast("Missing", "", [], [])
+end
+
+fn method_owner(method_name)
+    let dot_idx = find_dot(method_name)
+    if dot_idx < 0 then
+        return ""
+    end
+    return name_prefix(method_name, dot_idx)
+end
+
+fn method_short_name(method_name)
+    let dot_idx = find_dot(method_name)
+    if dot_idx < 0 then
+        return method_name
+    end
+    return method_name.slice(dot_idx + 1, method_name.length())
+end
+
+fn list_index_of(items, value: String) -> Number
+    let idx = 0
+    while idx < items.length() do
+        if items[idx] == value then
+            return idx
+        end
+        idx = idx + 1
+    end
+    return -1
+end
+
+fn analysis_type_fields(analysis: Analysis, type_name: String) -> Dynamic
+    let idx = list_index_of(analysis.type_names, type_name)
+    if idx < 0 then
+        return []
+    end
+    return analysis.type_fields[idx]
+end
+
+fn analysis_fn_arity(analysis: Analysis, fn_name: String) -> Number
+    let idx = list_index_of(analysis.fn_names, fn_name)
+    if idx < 0 then
+        return -1
+    end
+    return analysis.fn_arities[idx]
+end
+
+fn analysis_method_arity(analysis: Analysis, owner_name: String, method_name: String) -> Number
+    let idx = 0
+    while idx < analysis.method_names.length() do
+        if analysis.method_owners[idx] == owner_name and analysis.method_names[idx] == method_name then
+            return analysis.method_arities[idx]
+        end
+        idx = idx + 1
+    end
+    return -1
+end
+
+fn analysis_variant_arity(analysis: Analysis, variant_name: String) -> Number
+    let idx = list_index_of(analysis.variant_names, variant_name)
+    if idx < 0 then
+        return -1
+    end
+    return analysis.variant_arities[idx]
+end
+
+fn build_analysis(program)
+    let type_names = []
+    let type_fields = []
+    let fn_names = []
+    let fn_arities = []
+    let method_owners = []
+    let method_names = []
+    let method_arities = []
+    let variant_names = []
+    let variant_arities = []
+    let errors = []
+    let item_idx = 0
+
+    while item_idx < program.kids.length() do
+        let item = program.kids[item_idx]
+        if item.kind == "Type" or item.kind == "Struct" or item.kind == "Enum" then
+            if list_contains(type_names, item.value) == 1 then
+                errors.push("duplicate type-like declaration " + item.value)
+            else
+                type_names.push(item.value)
+                if item.kind == "Type" or item.kind == "Struct" then
+                    if item.kids.length() == 1 then
+                        type_fields.push(item.kids[0].names)
+                        let duplicate_field = has_duplicate_names(item.kids[0].names)
+                        if duplicate_field != "" then
+                            errors.push("duplicate field " + duplicate_field + " in " + item.kind + " " + item.value)
+                        end
+                    else
+                        type_fields.push([])
+                    end
+                else
+                    type_fields.push([])
+                    if item.kids.length() == 1 then
+                        let enum_variant_names = []
+                        let variant_idx = 0
+                        while variant_idx < item.kids[0].kids.length() do
+                            let variant = item.kids[0].kids[variant_idx]
+                            if list_contains(enum_variant_names, variant.value) == 1 then
+                                errors.push("duplicate enum variant " + variant.value + " in " + item.value)
+                            else
+                                enum_variant_names.push(variant.value)
+                            end
+                            if list_contains(variant_names, variant.value) == 0 then
+                                variant_names.push(variant.value)
+                                variant_arities.push(variant.names.length())
+                            end
+                            let duplicate_variant_field = has_duplicate_names(variant.names)
+                            if duplicate_variant_field != "" then
+                                errors.push("duplicate variant field " + duplicate_variant_field + " in " + item.value + "." + variant.value)
+                            end
+                            variant_idx = variant_idx + 1
+                        end
+                    end
+                end
+            end
+        end
+        if item.kind == "Fn" then
+            let dot_idx = find_dot(item.value)
+            if dot_idx >= 0 then
+                let owner_name = method_owner(item.value)
+                let short_name = method_short_name(item.value)
+                let method_idx = 0
+                let found_method = 0
+                while method_idx < method_names.length() do
+                    if method_owners[method_idx] == owner_name and method_names[method_idx] == short_name then
+                        found_method = 1
+                    end
+                    method_idx = method_idx + 1
+                end
+                if found_method == 1 then
+                    errors.push("duplicate function declaration " + item.value)
+                else
+                    method_owners.push(owner_name)
+                    method_names.push(short_name)
+                    if item.kids.length() > 0 then
+                        method_arities.push(item.kids[0].names.length())
+                    else
+                        method_arities.push(0)
+                    end
+                end
+            else
+                if list_contains(fn_names, item.value) == 1 then
+                    errors.push("duplicate function declaration " + item.value)
+                else
+                    fn_names.push(item.value)
+                    if item.kids.length() > 0 then
+                        fn_arities.push(item.kids[0].names.length())
+                    else
+                        fn_arities.push(0)
+                    end
+                end
+            end
+        end
+        item_idx = item_idx + 1
+    end
+
+    item_idx = 0
+    while item_idx < method_owners.length() do
+        if list_contains(type_names, method_owners[item_idx]) == 0 then
+            errors.push("method target type is not declared " + method_owners[item_idx] + " for " + method_owners[item_idx] + "." + method_names[item_idx])
+        end
+        item_idx = item_idx + 1
+    end
+
+    return AnalysisInfo(type_names, type_fields, fn_names, fn_arities, method_owners, method_names, method_arities, variant_names, variant_arities, errors)
+end
+
+fn infer_struct_name(expr, local_names, local_types)
+    if expr.kind == "StructLit" then
+        return expr.value
+    end
+    if expr.kind == "Ident" then
+        let idx = 0
+        while idx < local_names.length() do
+            if local_names[idx] == expr.value then
+                return local_types[idx]
+            end
+            idx = idx + 1
+        end
+    end
+    return ""
+end
+
+fn is_known_value_name(name: String, local_names, fn_names, variant_names) -> Number
+    if list_contains(local_names, name) == 1 then
+        return 1
+    end
+    if list_contains(fn_names, name) == 1 then
+        return 1
+    end
+    if list_contains(variant_names, name) == 1 then
+        return 1
+    end
+    if is_builtin_global(name) == 1 then
+        return 1
+    end
+    if name == "true" or name == "false" or name == "null" or name == "self" then
+        return 1
+    end
+    return 0
+end
+
+fn is_known_assignment_target(expr: Node, local_names) -> Number
+    if expr.kind == "Ident" then
+        return list_contains(local_names, expr.value)
+    end
+    if expr.kind == "Member" or expr.kind == "Index" then
+        if expr.kids.length() > 0 then
+            return is_known_assignment_target(expr.kids[0], local_names)
+        end
+        return 0
+    end
+    return 0
+end
+
+fn collect_pattern_bindings(pattern: Node, bind_depth: Number, local_names, local_types, local_bind_depths)
+    let pending_pattern = [pattern]
+    while pending_pattern.length() > 0 do
+        let pattern_node = pending_pattern[0]
+        let next_pattern = []
+        let rest_pattern_idx = 1
+        while rest_pattern_idx < pending_pattern.length() do
+            next_pattern.push(pending_pattern[rest_pattern_idx])
+            rest_pattern_idx = rest_pattern_idx + 1
+        end
+        if pattern_node.kind == "PatternIdent" then
+            if pattern_node.value != "_" and pattern_node.value != "true" and pattern_node.value != "false" and pattern_node.value != "null" then
+                local_names.push(pattern_node.value)
+                local_types.push("")
+                local_bind_depths.push(bind_depth)
+            end
+        end
+        let pattern_child_idx = 0
+        while pattern_child_idx < pattern_node.kids.length() do
+            next_pattern.push(pattern_node.kids[pattern_child_idx])
+            pattern_child_idx = pattern_child_idx + 1
+        end
+        pending_pattern = next_pattern
+    end
+    return PatternBindingInfo(local_names, local_types, local_bind_depths)
+end
+
+fn block_contains_return(block)
+    let stmt_idx = 0
+    while stmt_idx < block.kids.length() do
+        let stmt = block.kids[stmt_idx]
+        if stmt.kind == "Return" then
+            return 1
+        end
+        if stmt.kind == "If" then
+            if stmt.kids.length() >= 2 and block_contains_return(stmt.kids[1]) == 1 then
+                return 1
+            end
+            if stmt.kids.length() >= 3 and block_contains_return(stmt.kids[2]) == 1 then
+                return 1
+            end
+        end
+        if stmt.kind == "Match" and stmt.kids.length() >= 2 then
+            let case_idx = 0
+            while case_idx < stmt.kids[1].kids.length() do
+                if stmt.kids[1].kids[case_idx].kids.length() >= 3 then
+                    if block_contains_return(stmt.kids[1].kids[case_idx].kids[2]) == 1 then
+                        return 1
+                    end
+                end
+                case_idx = case_idx + 1
+            end
+        end
+        stmt_idx = stmt_idx + 1
+    end
+    return 0
+end
+
+fn digit_value(ch)
+    if ch == "0" then
+        return 0
+    end
+    if ch == "1" then
+        return 1
+    end
+    if ch == "2" then
+        return 2
+    end
+    if ch == "3" then
+        return 3
+    end
+    if ch == "4" then
+        return 4
+    end
+    if ch == "5" then
+        return 5
+    end
+    if ch == "6" then
+        return 6
+    end
+    if ch == "7" then
+        return 7
+    end
+    if ch == "8" then
+        return 8
+    end
+    if ch == "9" then
+        return 9
+    end
+    return 0
+end
+
+fn parse_number_text(text: String) -> Number
+    let idx = 0
+    let negative = 0
+    if text.length() > 0 and text.at(0) == "-" then
+        negative = 1
+        idx = 1
+    end
+    let whole = 0
+    while idx < text.length() and text.at(idx) != "." do
+        whole = whole * 10 + digit_value(text.at(idx))
+        idx = idx + 1
+    end
+    let frac = 0
+    let scale = 1
+    if idx < text.length() and text.at(idx) == "." then
+        idx = idx + 1
+        while idx < text.length() do
+            frac = frac * 10 + digit_value(text.at(idx))
+            scale = scale * 10
+            idx = idx + 1
+        end
+    end
+    let value = whole + frac / scale
+    if negative == 1 then
+        return 0 - value
+    end
+    return value
+end
+
+fn drop_last(items)
+    let out = []
+    let idx = 0
+    while idx + 1 < items.length() do
+        out.push(items[idx])
+        idx = idx + 1
+    end
+    return out
+end
+
+fn join_with_space(parts)
+    let out = ""
+    let idx = 0
+    while idx < parts.length() do
+        if idx > 0 then
+            out = out + " "
+        end
+        out = out + parts[idx]
+        idx = idx + 1
+    end
+    return out
+end
+
+fn trim_spaces(text: String) -> String
+    let start = 0
+    let finish = text.length()
+    while start < finish and text.at(start) == " " do
+        start = start + 1
+    end
+    while finish > start and text.at(finish - 1) == " " do
+        finish = finish - 1
+    end
+    return text.slice(start, finish)
+end
+
+fn string_contains(text: String, needle: String) -> Boolean
+    return text.contains(needle)
+end
+
+fn string_split(text: String, sep: String) -> Dynamic
+    return text.split(sep)
+end
+
+fn string_replace(text: String, old: String, new: String) -> String
+    let parts = text.split(old)
+    let out = ""
+    let idx = 0
+    while idx < parts.length() do
+        if idx > 0 then
+            out = out + new
+        end
+        out = out + parts[idx]
+        idx = idx + 1
+    end
+    return out
+end
+
+fn string_slice_simple(text: String, start: Number, finish: Number) -> String
+    if start < 0 then
+        start = 0
+    end
+    if finish < start then
+        return ""
+    end
+    let out = ""
+    let idx = start
+    while idx < finish and idx < text.length() do
+        out = out + text[idx]
+        idx = idx + 1
+    end
+    return out
+end
+
+fn normalize_angle(value: Number) -> Number
+    let two_pi = 6.283185307179586
+    while value > two_pi do
+        value = value - two_pi
+    end
+    while value < 0 do
+        value = value + two_pi
+    end
+    return value
+end
+
+fn sin_approx(value: Number) -> Number
+    let x = normalize_angle(value)
+    let x2 = x * x
+    let term = x
+    let result = term
+    let power = x * x2
+    result = result - power / 6
+    power = power * x2
+    result = result + power / 120
+    power = power * x2
+    result = result - power / 5040
+    power = power * x2
+    result = result + power / 362880
+    power = power * x2
+    result = result - power / 39916800
+    return result
+end
+
+fn cos_approx(value: Number) -> Number
+    let x = normalize_angle(value)
+    let x2 = x * x
+    let result = 1
+    let power = x2
+    result = result - power / 2
+    power = power * x2
+    result = result + power / 24
+    power = power * x2
+    result = result - power / 720
+    power = power * x2
+    result = result + power / 40320
+    power = power * x2
+    result = result - power / 3628800
+    return result
+end
+
+fn sqrt_approx(value: Number) -> Number
+    if value <= 0 then
+        return 0
+    end
+    let guess = value
+    let step = 0
+    while step < 12 do
+        guess = (guess + value / guess) / 2
+        step = step + 1
+    end
+    return guess
+end
+
+fn random_int_approx(min: Number, max: Number) -> Number
+    if max < min then
+        return min
+    end
+    return min
+end
+
+fn random_float_approx(min: Number, max: Number) -> Number
+    if max < min then
+        return min
+    end
+    return min + (max - min) / 2
+end
+
+fn json_encode_simple(value)
+    let escaped = string_replace(value, "\\", "\\\\")
+    escaped = string_replace(escaped, "\"", "\\\"")
+    return "\"" + escaped + "\""
+end
+
+fn get_env_simple(key)
+    return get_env(key)
+end
+
+fn block_definitely_returns(block)
+    let stmt_idx = 0
+    while stmt_idx < block.kids.length() do
+        let stmt = block.kids[stmt_idx]
+        if stmt.kind == "Return" then
+            return 1
+        end
+        if stmt.kind == "If" and stmt.kids.length() >= 3 then
+            if block_definitely_returns(stmt.kids[1]) == 1 and block_definitely_returns(stmt.kids[2]) == 1 then
+                return 1
+            end
+        end
+        if stmt.kind == "Match" and stmt.kids.length() >= 2 then
+            let all_cases_return = 1
+            let case_count = stmt.kids[1].kids.length()
+            if case_count == 0 then
+                return 0
+            end
+            let case_idx = 0
+            while case_idx < case_count do
+                let case_node = stmt.kids[1].kids[case_idx]
+                if case_node.kids.length() < 3 or block_definitely_returns(case_node.kids[2]) == 0 then
+                    all_cases_return = 0
+                end
+                case_idx = case_idx + 1
+            end
+            if all_cases_return == 1 then
+                return 1
+            end
+        end
+        stmt_idx = stmt_idx + 1
+    end
+    return 0
+end
+
+fn check_unreachable_in_block(block, fn_name, errors)
+    let stmt_idx = 0
+    let saw_return = 0
+    while stmt_idx < block.kids.length() do
+        let stmt = block.kids[stmt_idx]
+        if saw_return == 1 then
+            errors.push("unreachable statement after return in " + fn_name)
+            return 0
+        end
+        if stmt.kind == "If" then
+            if stmt.kids.length() >= 2 then
+                check_unreachable_in_block(stmt.kids[1], fn_name, errors)
+            end
+            if stmt.kids.length() >= 3 then
+                check_unreachable_in_block(stmt.kids[2], fn_name, errors)
+            end
+        end
+        if stmt.kind == "Match" and stmt.kids.length() >= 2 then
+            let case_idx = 0
+            while case_idx < stmt.kids[1].kids.length() do
+                let case_node = stmt.kids[1].kids[case_idx]
+                if case_node.kids.length() >= 3 then
+                    check_unreachable_in_block(case_node.kids[2], fn_name, errors)
+                end
+                case_idx = case_idx + 1
+            end
+        end
+        if stmt.kind == "Return" then
+            saw_return = 1
+        end
+        stmt_idx = stmt_idx + 1
+    end
+    return 0
+end
+
+fn analyze_symbols(program, error_count)
+    let analysis = build_analysis(program)
+    return Ast("Symbols", "", [], [
+        "types=" + to_string(analysis.type_names.length()),
+        "functions=" + to_string(analysis.fn_names.length()),
+        "methods=" + to_string(analysis.method_names.length()),
+        "errors=" + to_string(error_count)
+    ])
+end
+
+fn analyze_symbol_errors(program)
+    let analysis = build_analysis(program)
+    let errors = []
+    let analysis_error_idx = 0
+    while analysis_error_idx < analysis.errors.length() do
+        errors.push(analysis.errors[analysis_error_idx])
+        analysis_error_idx = analysis_error_idx + 1
+    end
+
+    let pending = [program]
+    while pending.length() > 0 do
+        let node = pending[0]
+        let next = []
+        let rest_idx = 1
+        while rest_idx < pending.length() do
+            next.push(pending[rest_idx])
+            rest_idx = rest_idx + 1
+        end
+
+        if node.kind == "Call" then
+            if list_contains(analysis.fn_names, node.value) == 0 and list_contains(analysis.variant_names, node.value) == 0 and is_builtin_global(node.value) == 0 then
+                errors.push("call target is not declared " + node.value)
+            end
+        end
+
+        if node.kind == "StructLit" then
+            let decl_fields = analysis_type_fields(analysis, node.value)
+            if decl_fields.length() == 0 and list_contains(analysis.type_names, node.value) == 0 then
+                errors.push("struct literal target is not declared " + node.value)
+            else
+                let field_idx = 0
+                while field_idx < node.names.length() do
+                    if list_contains(decl_fields, node.names[field_idx]) == 0 then
+                        errors.push("unknown field " + node.names[field_idx] + " in struct literal " + node.value)
+                    end
+                    field_idx = field_idx + 1
+                end
+            end
+        end
+
+        let child_idx = node.kids.length() - 1
+        while child_idx >= 0 do
+            next.push(node.kids[child_idx])
+            child_idx = child_idx - 1
+        end
+        pending = next
+    end
+
+    let top_idx = 0
+    while top_idx < program.kids.length() do
+        let top = program.kids[top_idx]
+        if top.kind == "Fn" and top.kids.length() == 2 then
+            if block_contains_return(top.kids[1]) == 1 and block_definitely_returns(top.kids[1]) == 0 then
+                errors.push("function has non-returning path " + top.value)
+            end
+            check_unreachable_in_block(top.kids[1], top.value, errors)
+
+                        let local_names = []
+                        let local_types = []
+                        let local_bind_depths = []
+            let param_idx = 0
+            while param_idx < top.kids[0].names.length() do
+                local_names.push(top.kids[0].names[param_idx])
+                local_types.push("")
+                local_bind_depths.push(0)
+                param_idx = param_idx + 1
+            end
+            if find_dot(top.value) >= 0 then
+                local_names.push("self")
+                local_types.push(method_owner(top.value))
+                local_bind_depths.push(0)
+            end
+
+            let pending_fn_nodes = [top.kids[1]]
+            let pending_fn_depths = [1]
+            let pending_fn_stages = [0]
+            while pending_fn_nodes.length() > 0 do
+                let node = pending_fn_nodes[0]
+                let depth = pending_fn_depths[0]
+                let stage = pending_fn_stages[0]
+
+                let rest_nodes = []
+                let rest_depths = []
+                let rest_stages = []
+                let rest_fn_idx = 1
+                while rest_fn_idx < pending_fn_nodes.length() do
+                    rest_nodes.push(pending_fn_nodes[rest_fn_idx])
+                    rest_depths.push(pending_fn_depths[rest_fn_idx])
+                    rest_stages.push(pending_fn_stages[rest_fn_idx])
+                    rest_fn_idx = rest_fn_idx + 1
+                end
+
+                if stage == 1 then
+                    let kept_names = []
+                    let kept_types = []
+                    let kept_depths = []
+                    let scope_idx = 0
+                    while scope_idx < local_names.length() do
+                        if local_bind_depths[scope_idx] != depth then
+                            kept_names.push(local_names[scope_idx])
+                            kept_types.push(local_types[scope_idx])
+                            kept_depths.push(local_bind_depths[scope_idx])
+                        end
+                        scope_idx = scope_idx + 1
+                    end
+                    local_names = kept_names
+                    local_types = kept_types
+                    local_bind_depths = kept_depths
+                    pending_fn_nodes = rest_nodes
+                    pending_fn_depths = rest_depths
+                    pending_fn_stages = rest_stages
+                else
+                    if stage == 2 then
+                        let inferred_type = ""
+                        if node.kids.length() == 1 then
+                            inferred_type = infer_struct_name(node.kids[0], local_names, local_types)
+                        end
+                        local_names.push(node.value)
+                        local_types.push(inferred_type)
+                        local_bind_depths.push(depth)
+                        pending_fn_nodes = rest_nodes
+                        pending_fn_depths = rest_depths
+                        pending_fn_stages = rest_stages
+                    else
+                        if node.kind == "Ident" then
+                            if is_known_value_name(node.value, local_names, analysis.fn_names, analysis.variant_names) == 0 then
+                                errors.push("identifier is not declared " + node.value + " in " + top.value)
+                            end
+                        end
+
+                        if node.kind == "Assign" and node.kids.length() == 2 then
+                            if is_known_assignment_target(node.kids[0], local_names) == 0 then
+                                errors.push("assignment target is not declared in " + top.value)
+                            end
+                        end
+
+                        if node.kind == "Call" and list_contains(analysis.variant_names, node.value) == 1 then
+                            let variant_arity = analysis_variant_arity(analysis, node.value)
+                            if variant_arity >= 0 and node.kids.length() != variant_arity then
+                                errors.push("enum constructor arity mismatch for " + node.value)
+                            end
+                        else
+                            if node.kind == "Call" and list_contains(analysis.fn_names, node.value) == 1 then
+                                let fn_arity = analysis_fn_arity(analysis, node.value)
+                                if fn_arity >= 0 and node.kids.length() != fn_arity then
+                                    errors.push("function arity mismatch for " + node.value)
+                                end
+                            end
+                        end
+
+                        if node.kind == "StructLit" then
+                            let decl_fields = analysis_type_fields(analysis, node.value)
+                            if list_contains(analysis.type_names, node.value) == 1 then
+                                let duplicate_use_field = has_duplicate_names(node.names)
+                                if duplicate_use_field != "" then
+                                    errors.push("duplicate field " + duplicate_use_field + " in struct literal " + node.value)
+                                end
+                                let decl_field_idx = 0
+                                while decl_field_idx < decl_fields.length() do
+                                    if list_contains(node.names, decl_fields[decl_field_idx]) == 0 then
+                                        errors.push("missing field " + decl_fields[decl_field_idx] + " in struct literal " + node.value)
+                                    end
+                                    decl_field_idx = decl_field_idx + 1
+                                end
+                            end
+                        end
+
+                        if node.kind == "MethodCall" and node.kids.length() > 0 then
+                            let owner_name = infer_struct_name(node.kids[0], local_names, local_types)
+                            if owner_name != "" then
+                                let method_arity = analysis_method_arity(analysis, owner_name, node.value)
+                                if method_arity < 0 then
+                                    errors.push("method " + node.value + " is not declared for " + owner_name)
+                                else
+                                    if node.kids.length() - 1 != method_arity then
+                                        errors.push("method arity mismatch for " + owner_name + "." + node.value)
+                                    end
+                                end
+                            end
+                        end
+
+                        let next_nodes = []
+                        let next_depths = []
+                        let next_stages = []
+
+                        if node.kind == "Block" then
+                            let child_idx = 0
+                            while child_idx < node.kids.length() do
+                                next_nodes.push(node.kids[child_idx])
+                                next_depths.push(depth)
+                                next_stages.push(0)
+                                child_idx = child_idx + 1
+                            end
+                            next_nodes.push(node)
+                            next_depths.push(depth)
+                            next_stages.push(1)
+                        else
+                            if node.kind == "Case" and node.kids.length() >= 3 then
+                                let bind_depth = depth + 1
+                                let pattern_bindings = collect_pattern_bindings(node.kids[0], bind_depth, local_names, local_types, local_bind_depths)
+                                local_names = pattern_bindings.names
+                                local_types = pattern_bindings.types
+                                local_bind_depths = pattern_bindings.depths
+                                next_nodes.push(node.kids[1])
+                                next_depths.push(bind_depth)
+                                next_stages.push(0)
+                                next_nodes.push(node.kids[2])
+                                next_depths.push(bind_depth + 1)
+                                next_stages.push(0)
+                                next_nodes.push(node)
+                                next_depths.push(bind_depth)
+                                next_stages.push(1)
+                            else
+                                if node.kind == "Let" then
+                                    let child_idx = 0
+                                    while child_idx < node.kids.length() do
+                                        next_nodes.push(node.kids[child_idx])
+                                        next_depths.push(depth)
+                                        next_stages.push(0)
+                                        child_idx = child_idx + 1
+                                    end
+                                    next_nodes.push(node)
+                                    next_depths.push(depth)
+                                    next_stages.push(2)
+                                else
+                                    let child_idx = 0
+                                    while child_idx < node.kids.length() do
+                                        if node.kind == "Assign" and child_idx == 0 then
+                                            if node.kids[child_idx].kind == "Index" and node.kids[child_idx].kids.length() > 1 then
+                                                next_nodes.push(node.kids[child_idx].kids[1])
+                                                next_depths.push(depth)
+                                                next_stages.push(0)
+                                            end
+                                        else
+                                            next_nodes.push(node.kids[child_idx])
+                                            if node.kids[child_idx].kind == "Block" then
+                                                next_depths.push(depth + 1)
+                                            else
+                                                next_depths.push(depth)
+                                            end
+                                            next_stages.push(0)
+                                        end
+                                        child_idx = child_idx + 1
+                                    end
+                                end
+                            end
+                        end
+
+                        let rest_append_idx = 0
+                        while rest_append_idx < rest_nodes.length() do
+                            next_nodes.push(rest_nodes[rest_append_idx])
+                            next_depths.push(rest_depths[rest_append_idx])
+                            next_stages.push(rest_stages[rest_append_idx])
+                            rest_append_idx = rest_append_idx + 1
+                        end
+                        pending_fn_nodes = next_nodes
+                        pending_fn_depths = next_depths
+                        pending_fn_stages = next_stages
+                    end
+                end
+            end
+        end
+        top_idx = top_idx + 1
+    end
+
+    return errors
+end
+
+fn collect_module_info(program, analysis)
+    let items = []
+    let type_idx = 0
+    while type_idx < analysis.type_names.length() do
+        items.push(Ast("TypeInfo", analysis.type_names[type_idx], [], analysis.type_fields[type_idx]))
+        type_idx = type_idx + 1
+    end
+
+    let variant_idx = 0
+    while variant_idx < analysis.variant_names.length() do
+        items.push(Ast("VariantInfo", analysis.variant_names[variant_idx], [], ["arity=" + to_string(analysis.variant_arities[variant_idx])]))
+        variant_idx = variant_idx + 1
+    end
+
+    let fn_idx = 0
+    while fn_idx < analysis.fn_names.length() do
+        items.push(Ast("FnInfo", analysis.fn_names[fn_idx], [], ["arity=" + to_string(analysis.fn_arities[fn_idx])]))
+        fn_idx = fn_idx + 1
+    end
+
+    let method_idx = 0
+    while method_idx < analysis.method_names.length() do
+        items.push(Ast("MethodInfo", analysis.method_owners[method_idx] + "." + analysis.method_names[method_idx], [], ["arity=" + to_string(analysis.method_arities[method_idx])]))
+        method_idx = method_idx + 1
+    end
+
+    return Ast("ModuleInfo", "", items, [
+        "types=" + to_string(analysis.type_names.length()),
+        "functions=" + to_string(analysis.fn_names.length()),
+        "methods=" + to_string(analysis.method_names.length()),
+        "variants=" + to_string(analysis.variant_names.length())
+    ])
+end
+
+fn lower_decl_ir(program, analysis)
+    let items = []
+    let item_idx = 0
+    while item_idx < program.kids.length() do
+        let item = program.kids[item_idx]
+        if item.kind == "Type" or item.kind == "Struct" then
+            let field_items = []
+            let field_idx = 0
+            while item.kids.length() > 0 and field_idx < item.kids[0].names.length() do
+                field_items.push(Ast("IRField", item.kids[0].names[field_idx], [], []))
+                field_idx = field_idx + 1
+            end
+            items.push(Ast("IRType", item.value, field_items, ["kind=" + item.kind]))
+        end
+        if item.kind == "Enum" then
+            let variant_items = []
+            let variant_idx = 0
+            while item.kids.length() > 0 and variant_idx < item.kids[0].kids.length() do
+                let variant = item.kids[0].kids[variant_idx]
+                variant_items.push(Ast("IRVariant", variant.value, [], variant.names))
+                variant_idx = variant_idx + 1
+            end
+            items.push(Ast("IREnum", item.value, variant_items, []))
+        end
+        if item.kind == "Fn" then
+            let param_names = []
+            if item.kids.length() > 0 then
+                let param_idx = 0
+                while param_idx < item.kids[0].names.length() do
+                    param_names.push(item.kids[0].names[param_idx])
+                    param_idx = param_idx + 1
+                end
+            end
+            let body_count = 0
+            if item.kids.length() > 1 then
+                body_count = item.kids[1].kids.length()
+            end
+            if find_dot(item.value) >= 0 then
+                items.push(Ast("IRMethod", item.value, [], [
+                    "owner=" + method_owner(item.value),
+                    "name=" + method_short_name(item.value),
+                    "arity=" + to_string(param_names.length()),
+                    "body_stmts=" + to_string(body_count)
+                ]))
+            else
+                items.push(Ast("IRFn", item.value, [], [
+                    "arity=" + to_string(param_names.length()),
+                    "body_stmts=" + to_string(body_count)
+                ]))
+            end
+        end
+        item_idx = item_idx + 1
+    end
+    return Ast("ModuleIR", "", items, [
+        "types=" + to_string(analysis.type_names.length()),
+        "functions=" + to_string(analysis.fn_names.length()),
+        "methods=" + to_string(analysis.method_names.length()),
+        "variants=" + to_string(analysis.variant_names.length())
+    ])
+end
+
+fn lower_expr_ir(expr, analysis)
+    if expr.kind == "Number" then
+        return Ast("IRNumber", expr.value, [], [])
+    end
+    if expr.kind == "String" then
+        return Ast("IRString", expr.value, [], [])
+    end
+    if expr.kind == "Ident" then
+        if list_contains(analysis.variant_names, expr.value) == 1 and analysis_variant_arity(analysis, expr.value) == 0 then
+            return Ast("IRCall", expr.value, [], [])
+        end
+        return Ast("IRIdent", expr.value, [], [])
+    end
+    if expr.kind == "List" then
+        let items = []
+        let item_idx = 0
+        while item_idx < expr.kids.length() do
+            items.push(lower_expr_ir(expr.kids[item_idx], analysis))
+            item_idx = item_idx + 1
+        end
+        return Ast("IRList", "", items, [])
+    end
+    if expr.kind == "Call" then
+        let arg_items = []
+        let arg_idx = 0
+        while arg_idx < expr.kids.length() do
+            arg_items.push(lower_expr_ir(expr.kids[arg_idx], analysis))
+            arg_idx = arg_idx + 1
+        end
+        return Ast("IRCall", expr.value, arg_items, [])
+    end
+    if expr.kind == "MethodCall" then
+        let arg_items = [lower_expr_ir(expr.kids[0], analysis)]
+        let arg_idx = 1
+        while arg_idx < expr.kids.length() do
+            arg_items.push(lower_expr_ir(expr.kids[arg_idx], analysis))
+            arg_idx = arg_idx + 1
+        end
+        return Ast("IRMethodCall", expr.value, arg_items, [])
+    end
+    if expr.kind == "Member" then
+        return Ast("IRMember", expr.value, [lower_expr_ir(expr.kids[0], analysis)], [])
+    end
+    if expr.kind == "Index" then
+        return Ast("IRIndex", "", [lower_expr_ir(expr.kids[0], analysis), lower_expr_ir(expr.kids[1], analysis)], [])
+    end
+    if expr.kind == "StructLit" then
+        let fields = []
+        let field_idx = 0
+        while field_idx < expr.kids.length() do
+            fields.push(Ast("IRStructField", expr.names[field_idx], [lower_expr_ir(expr.kids[field_idx], analysis)], []))
+            field_idx = field_idx + 1
+        end
+        return Ast("IRStructLit", expr.value, fields, [])
+    end
+    if expr.kind == "Binary" then
+        return Ast("IRBinary", expr.value, [lower_expr_ir(expr.kids[0], analysis), lower_expr_ir(expr.kids[1], analysis)], [])
+    end
+    if expr.kind == "Unary" then
+        return Ast("IRUnary", expr.value, [lower_expr_ir(expr.kids[0], analysis)], [])
+    end
+    return Ast("IRExprUnsupported", expr.kind, [], [])
+end
+
+fn lower_pattern_ir(pattern, analysis)
+    if pattern.kind == "PatternNumber" then
+        return Ast("IRPatternNumber", pattern.value, [], [])
+    end
+    if pattern.kind == "PatternString" then
+        return Ast("IRPatternString", pattern.value, [], [])
+    end
+    if pattern.kind == "PatternIdent" then
+        if pattern.value == "true" then
+            return Ast("IRPatternBool", "true", [], [])
+        end
+        if pattern.value == "false" then
+            return Ast("IRPatternBool", "false", [], [])
+        end
+        if pattern.value == "null" then
+            return Ast("IRPatternNull", "null", [], [])
+        end
+        if list_contains(analysis.variant_names, pattern.value) == 1 and analysis_variant_arity(analysis, pattern.value) == 0 then
+            return Ast("IRPatternCall", pattern.value, [], [])
+        end
+        return Ast("IRPatternIdent", pattern.value, [], [])
+    end
+    if pattern.kind == "PatternCall" then
+        let items = []
+        let item_idx = 0
+        while item_idx < pattern.kids.length() do
+            items.push(lower_pattern_ir(pattern.kids[item_idx], analysis))
+            item_idx = item_idx + 1
+        end
+        return Ast("IRPatternCall", pattern.value, items, [])
+    end
+    if pattern.kind == "PatternStruct" then
+        let fields = []
+        let field_idx = 0
+        while field_idx < pattern.kids.length() do
+            fields.push(lower_pattern_ir(pattern.kids[field_idx], analysis))
+            field_idx = field_idx + 1
+        end
+        return Ast("IRPatternStruct", pattern.value, fields, pattern.names)
+    end
+    return Ast("IRPatternUnsupported", pattern.kind, [], [])
+end
+
+fn lower_stmt_ir(stmt, analysis)
+    if stmt.kind == "Import" then
+        return Ast("IRNoop", "Import", [], [])
+    end
+    if stmt.kind == "Let" and stmt.kids.length() == 1 then
+        return Ast("IRLet", stmt.value, [lower_expr_ir(stmt.kids[0], analysis)], [])
+    end
+    if stmt.kind == "Return" and stmt.kids.length() == 1 then
+        return Ast("IRReturn", "", [lower_expr_ir(stmt.kids[0], analysis)], [])
+    end
+    if stmt.kind == "ExprStmt" and stmt.kids.length() == 1 then
+        return Ast("IRExprStmt", "", [lower_expr_ir(stmt.kids[0], analysis)], [])
+    end
+    if stmt.kind == "Assign" and stmt.kids.length() == 2 then
+        return Ast("IRAssign", "", [lower_expr_ir(stmt.kids[0], analysis), lower_expr_ir(stmt.kids[1], analysis)], [])
+    end
+    if stmt.kind == "Print" then
+        let arg_items = []
+        let arg_idx = 0
+        while arg_idx < stmt.kids.length() do
+            arg_items.push(lower_expr_ir(stmt.kids[arg_idx], analysis))
+            arg_idx = arg_idx + 1
+        end
+        return Ast("IRPrint", "", arg_items, [])
+    end
+    if stmt.kind == "If" and stmt.kids.length() >= 2 then
+        let kids = [lower_expr_ir(stmt.kids[0], analysis), lower_body_ir(stmt.kids[1], analysis)]
+        if stmt.kids.length() >= 3 then
+            kids.push(lower_body_ir(stmt.kids[2], analysis))
+        end
+        return Ast("IRIf", "", kids, [])
+    end
+    if stmt.kind == "While" and stmt.kids.length() >= 2 then
+        return Ast("IRWhile", "", [lower_expr_ir(stmt.kids[0], analysis), lower_body_ir(stmt.kids[1], analysis)], [])
+    end
+    if stmt.kind == "Match" and stmt.kids.length() >= 2 then
+        let case_items = []
+        let case_idx = 0
+        while case_idx < stmt.kids[1].kids.length() do
+            let case_node = stmt.kids[1].kids[case_idx]
+            if case_node.kids.length() >= 3 then
+                let guard_ir = lower_expr_ir(case_node.kids[1].kids[0], analysis)
+                if case_node.kids[1].kids[0].kind == "NoGuard" then
+                    guard_ir = Ast("IRIdent", "true", [], [])
+                end
+                case_items.push(Ast("IRCase", "", [
+                    lower_pattern_ir(case_node.kids[0], analysis),
+                    guard_ir,
+                    lower_body_ir(case_node.kids[2], analysis)
+                ], []))
+            end
+            case_idx = case_idx + 1
+        end
+        return Ast("IRMatch", "", [lower_expr_ir(stmt.kids[0], analysis), Ast("IRCases", "", case_items, [])], [])
+    end
+    return Ast("IRStmtUnsupported", stmt.kind, [], [])
+end
+
+fn lower_body_ir(block, analysis)
+    let items = []
+    let stmt_idx = 0
+    while stmt_idx < block.kids.length() do
+        items.push(lower_stmt_ir(block.kids[stmt_idx], analysis))
+        stmt_idx = stmt_idx + 1
+    end
+    return Ast("IRBody", "", items, [])
+end
+
+fn lower_exec_ir(program, analysis)
+    let items = []
+    let top_stmts = []
+    let item_idx = 0
+    while item_idx < program.kids.length() do
+        let item = program.kids[item_idx]
+        if item.kind == "Fn" and item.kids.length() >= 2 then
+            let param_names = []
+            let param_idx = 0
+            while param_idx < item.kids[0].names.length() do
+                param_names.push(item.kids[0].names[param_idx])
+                param_idx = param_idx + 1
+            end
+            let meta = ["arity=" + to_string(param_names.length())]
+            let kids = [Ast("IRParams", "", [], param_names), lower_body_ir(item.kids[1], analysis)]
+            if find_dot(item.value) >= 0 then
+                meta.push("owner=" + method_owner(item.value))
+                meta.push("name=" + method_short_name(item.value))
+                items.push(Ast("IRExecMethod", item.value, kids, meta))
+            else
+                items.push(Ast("IRExecFn", item.value, kids, meta))
+            end
+        else
+            if item.kind != "Type" and item.kind != "Struct" and item.kind != "Enum" then
+                top_stmts.push(lower_stmt_ir(item, analysis))
+            end
+        end
+        item_idx = item_idx + 1
+    end
+    if top_stmts.length() > 0 then
+        items.push(Ast("IRExecTop", "__top", [Ast("IRParams", "", [], []), Ast("IRBody", "", top_stmts, [])], []))
+    end
+    return Ast("ExecIR", "", items, [
+        "functions=" + to_string(analysis.fn_names.length()),
+        "methods=" + to_string(analysis.method_names.length()),
+        "top=" + to_string(top_stmts.length())
+    ])
+end
+
+fn print_named_summary(prefix, names)
+    let line = prefix
+    let idx = 0
+    while idx < names.length() do
+        line = line + " " + names[idx]
+        idx = idx + 1
+    end
+    print(line)
+end
+
+fn print_ir_tree(root, start_indent)
+    let pending_nodes = [root]
+    let pending_depths = [start_indent]
+    while pending_nodes.length() > 0 do
+        let current = pending_nodes[0]
+        let current_depth = pending_depths[0]
+        let indent = ""
+        let step = 0
+        while step < current_depth do
+            indent = indent + "  "
+            step = step + 1
+        end
+        let line = indent + current.kind
+        if current.value != "" then
+            line = line + " " + current.value
+        end
+        let name_idx = 0
+        while name_idx < current.names.length() do
+            line = line + " " + current.names[name_idx]
+            name_idx = name_idx + 1
+        end
+        print(line)
+        let next_nodes = []
+        let next_depths = []
+        let child_idx = 0
+        while child_idx < current.kids.length() do
+            next_nodes.push(current.kids[child_idx])
+            next_depths.push(current_depth + 1)
+            child_idx = child_idx + 1
+        end
+        let rest_idx = 1
+        while rest_idx < pending_nodes.length() do
+            next_nodes.push(pending_nodes[rest_idx])
+            next_depths.push(pending_depths[rest_idx])
+            rest_idx = rest_idx + 1
+        end
+        pending_nodes = next_nodes
+        pending_depths = next_depths
+    end
+end
+
+fn env_lookup(names, values, name)
+    let idx = names.length() - 1
+    while idx >= 0 do
+        if names[idx] == name then
+            return EvalResult(1, values[idx])
+        end
+        idx = idx - 1
+    end
+    return EvalResult(0, null)
+end
+
+fn env_set(names, values, name, value)
+    let idx = names.length() - 1
+    while idx >= 0 do
+        if names[idx] == name then
+            values[idx] = value
+            return 1
+        end
+        idx = idx - 1
+    end
+    return 0
+end
+
+fn find_exec_decl(exec_ir: Node, name: String) -> Node
+    let idx = 0
+    while idx < exec_ir.kids.length() do
+        if exec_ir.kids[idx].value == name then
+            return exec_ir.kids[idx]
+        end
+        idx = idx + 1
+    end
+    return Ast("Missing", "", [], [])
+end
+
+fn is_struct_value(value: Dynamic) -> Number
+    if value.tag != "" then
+        return 1
+    end
+    return 0
+end
+
+fn struct_get(value: Dynamic, field: String) -> EvalBox
+    let idx = 0
+    while idx < value.names.length() do
+        if value.names[idx] == field then
+            return EvalResult(1, value.values[idx])
+        end
+        idx = idx + 1
+    end
+    return EvalResult(0, null)
+end
+
+fn struct_set(value: Dynamic, field: String, new_value: Dynamic) -> Number
+    let idx = 0
+    while idx < value.names.length() do
+        if value.names[idx] == field then
+            value.values[idx] = new_value
+            return 1
+        end
+        idx = idx + 1
+    end
+    return 0
+end
+
+fn is_enum_value(value: Dynamic) -> Number
+    if value.variant != "" then
+        return 1
+    end
+    return 0
+end
+
+fn match_ir_pattern(pattern: Node, value: Dynamic, bindings: MatchBindings) -> Number
+    if pattern.kind == "IRPatternNumber" then
+        if to_string(value) == to_string(parse_number_text(pattern.value)) then
+            return 1
+        end
+        return 0
+    end
+    if pattern.kind == "IRPatternString" then
+        if to_string(value) == pattern.value then
+            return 1
+        end
+        return 0
+    end
+    if pattern.kind == "IRPatternBool" then
+        let text = to_string(value)
+        if pattern.value == "true" and (text == "true" or text == "1") then
+            return 1
+        end
+        if pattern.value == "false" and (text == "false" or text == "0") then
+            return 1
+        end
+        return 0
+    end
+    if pattern.kind == "IRPatternNull" then
+        if to_string(value) == "null" then
+            return 1
+        end
+        return 0
+    end
+    if pattern.kind == "IRPatternIdent" then
+        if pattern.value == "_" then
+            return 1
+        end
+        bindings.names.push(pattern.value)
+        bindings.values.push(value)
+        return 1
+    end
+    if pattern.kind == "IRPatternCall" then
+        if value.variant == "" then
+            return 0
+        end
+        if value.variant != pattern.value then
+            return 0
+        end
+        if value.values.length() != pattern.kids.length() then
+            return 0
+        end
+        let idx = 0
+        while idx < pattern.kids.length() do
+            if match_ir_pattern(pattern.kids[idx], value.values[idx], bindings) == 0 then
+                return 0
+            end
+            idx = idx + 1
+        end
+        return 1
+    end
+    if pattern.kind == "IRPatternStruct" then
+        if is_struct_value(value) == 0 then
+            return 0
+        end
+        if value.tag != pattern.value then
+            return 0
+        end
+        if pattern.kids.length() != pattern.names.length() then
+            return 0
+        end
+        let idx = 0
+        while idx < pattern.kids.length() do
+            let field_value = struct_get(value, pattern.names[idx])
+            if field_value.ok == 0 then
+                return 0
+            end
+            if match_ir_pattern(pattern.kids[idx], field_value.value, bindings) == 0 then
+                return 0
+            end
+            idx = idx + 1
+        end
+        return 1
+    end
+    return 0
+end
+
+fn eval_ir_expr(expr: Node, exec_ir: Node, names, values) -> EvalBox
+    if expr.kind == "IRNumber" then
+        return EvalResult(1, parse_number_text(expr.value))
+    end
+    if expr.kind == "IRString" then
+        return EvalResult(1, expr.value)
+    end
+    if expr.kind == "IRIdent" then
+        if expr.value == "true" then
+            return EvalResult(1, 1)
+        end
+        if expr.value == "false" then
+            return EvalResult(1, 0)
+        end
+        if expr.value == "null" then
+            return EvalResult(1, null)
+        end
+        if expr.value == "red" or expr.value == "green" or expr.value == "blue" or expr.value == "white" or expr.value == "black" or expr.value == "dark_gray" or expr.value == "neon_pink" then
+            return EvalResult(1, expr.value)
+        end
+        return env_lookup(names, values, expr.value)
+    end
+    if expr.kind == "IRList" then
+        let items = []
+        let item_idx = 0
+        while item_idx < expr.kids.length() do
+            let item = eval_ir_expr(expr.kids[item_idx], exec_ir, names, values)
+            if item.ok == 0 then
+                return item
+            end
+            items.push(item.value)
+            item_idx = item_idx + 1
+        end
+        return EvalResult(1, items)
+    end
+    if expr.kind == "IRStructLit" then
+        let field_names = []
+        let field_values = []
+        let field_idx = 0
+        while field_idx < expr.kids.length() do
+            let field_node = expr.kids[field_idx]
+            let field_value = eval_ir_expr(field_node.kids[0], exec_ir, names, values)
+            if field_value.ok == 0 then
+                return field_value
+            end
+            field_names.push(field_node.value)
+            field_values.push(field_value.value)
+            field_idx = field_idx + 1
+        end
+        return EvalResult(1, StructVal(expr.value, field_names, field_values))
+    end
+    if expr.kind == "IRMember" and expr.kids.length() == 1 then
+        let target = eval_ir_expr(expr.kids[0], exec_ir, names, values)
+        if target.ok == 0 then
+            return target
+        end
+        return struct_get(target.value, expr.value)
+    end
+    if expr.kind == "IRIndex" and expr.kids.length() == 2 then
+        let target = eval_ir_expr(expr.kids[0], exec_ir, names, values)
+        if target.ok == 0 then
+            return target
+        end
+        let index = eval_ir_expr(expr.kids[1], exec_ir, names, values)
+        if index.ok == 0 then
+            return index
+        end
+        let idx = index.value
+        if idx >= 0 and idx < target.value.length() then
+            return EvalResult(1, target.value[idx])
+        end
+        return EvalResult(0, null)
+    end
+    if expr.kind == "IRUnary" and expr.kids.length() == 1 then
+        let value = eval_ir_expr(expr.kids[0], exec_ir, names, values)
+        if value.ok == 0 then
+            return value
+        end
+        if expr.value == "-" then
+            return EvalResult(1, 0 - value.value)
+        end
+        if expr.value == "not" then
+            if value.value then
+                return EvalResult(1, 0)
+            end
+            return EvalResult(1, 1)
+        end
+    end
+    if expr.kind == "IRBinary" and expr.kids.length() == 2 then
+        let left = eval_ir_expr(expr.kids[0], exec_ir, names, values)
+        if left.ok == 0 then
+            return left
+        end
+        let right = eval_ir_expr(expr.kids[1], exec_ir, names, values)
+        if right.ok == 0 then
+            return right
+        end
+        if expr.value == "+" then
+            return EvalResult(1, left.value + right.value)
+        end
+        if expr.value == "-" then
+            return EvalResult(1, left.value - right.value)
+        end
+        if expr.value == "*" then
+            return EvalResult(1, left.value * right.value)
+        end
+        if expr.value == "/" then
+            return EvalResult(1, left.value / right.value)
+        end
+        if expr.value == "==" then
+            if left.value == right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == "!=" then
+            if left.value != right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == "<" then
+            if left.value < right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == ">" then
+            if left.value > right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == "<=" then
+            if left.value <= right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == ">=" then
+            if left.value >= right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == "and" then
+            if left.value and right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == "or" then
+            if left.value or right.value then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+    end
+    if expr.kind == "IRCall" then
+        let arg_values: Dynamic = []
+        let arg_idx = 0
+        while arg_idx < expr.kids.length() do
+            let arg_value = eval_ir_expr(expr.kids[arg_idx], exec_ir, names, values)
+            if arg_value.ok == 0 then
+                return arg_value
+            end
+            arg_values.push(arg_value.value)
+            arg_idx = arg_idx + 1
+        end
+        if expr.value == "to_string" and arg_values.length() == 1 then
+            return EvalResult(1, to_string(arg_values[0]))
+        end
+        if expr.value == "to_number" and arg_values.length() == 1 then
+            return EvalResult(1, parse_number_text(to_string(arg_values[0])))
+        end
+        if expr.value == "sin" and arg_values.length() == 1 then
+            return EvalResult(1, sin_approx(arg_values[0]))
+        end
+        if expr.value == "cos" and arg_values.length() == 1 then
+            return EvalResult(1, cos_approx(arg_values[0]))
+        end
+        if expr.value == "sqrt" and arg_values.length() == 1 then
+            return EvalResult(1, sqrt_approx(arg_values[0]))
+        end
+        if expr.value == "abs" and arg_values.length() == 1 then
+            if arg_values[0] < 0 then
+                return EvalResult(1, 0 - arg_values[0])
+            end
+            return EvalResult(1, arg_values[0])
+        end
+        if expr.value == "random_int" and arg_values.length() == 2 then
+            return EvalResult(1, random_int_approx(arg_values[0], arg_values[1]))
+        end
+        if expr.value == "random_float" and arg_values.length() == 2 then
+            return EvalResult(1, random_float_approx(arg_values[0], arg_values[1]))
+        end
+        if expr.value == "read_file" and arg_values.length() == 1 then
+            return EvalResult(1, read_file(arg_values[0]))
+        end
+        if expr.value == "write_file" and arg_values.length() == 2 then
+            write_file(arg_values[0], arg_values[1])
+            return EvalResult(1, null)
+        end
+        if expr.value == "get_args" and arg_values.length() == 0 then
+            return EvalResult(1, get_args())
+        end
+        if expr.value == "get_env" and arg_values.length() == 1 then
+            return EvalResult(1, get_env_simple(arg_values[0]))
+        end
+        if expr.value == "get_key" and arg_values.length() == 0 then
+            return EvalResult(1, get_key())
+        end
+        if expr.value == "poll_key" and arg_values.length() == 0 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "input" and arg_values.length() == 0 then
+            return EvalResult(1, input())
+        end
+        if expr.value == "json_encode" and arg_values.length() == 1 then
+            return EvalResult(1, json_encode_simple(arg_values[0]))
+        end
+        if expr.value == "json_decode" and arg_values.length() == 1 then
+            return EvalResult(1, json_decode(arg_values[0]))
+        end
+        if expr.value == "type_of" and arg_values.length() == 1 then
+            let type_value: Dynamic = arg_values[0]
+            if type_value == null then
+                return EvalResult(1, "Null")
+            end
+            if to_string(type_value) == type_value then
+                return EvalResult(1, "String")
+            end
+            return EvalResult(1, "Number")
+        end
+        if expr.value == "sleep" and arg_values.length() == 1 then
+            sleep(arg_values[0])
+            return EvalResult(1, null)
+        end
+        if expr.value == "panic" and arg_values.length() == 1 then
+            print("PANIC " + to_string(arg_values[0]))
+            return EvalResult(0, null)
+        end
+        if expr.value == "assert" and arg_values.length() == 2 then
+            if arg_values[0] then
+                return EvalResult(1, null)
+            end
+            print("ASSERT " + to_string(arg_values[1]))
+            return EvalResult(0, null)
+        end
+        if expr.value == "debug" and arg_values.length() == 2 then
+            print("DEBUG " + to_string(arg_values[0]) + " " + to_string(arg_values[1]))
+            return EvalResult(1, arg_values[1])
+        end
+        if expr.value == "window" and arg_values.length() == 3 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "live" and arg_values.length() == 0 then
+            return EvalResult(1, 0)
+        end
+        if expr.value == "clear_screen" and arg_values.length() == 1 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "circle" and arg_values.length() == 4 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "rect" and arg_values.length() == 5 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "line" and arg_values.length() == 5 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "triangle" and arg_values.length() == 7 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "text" and arg_values.length() == 5 then
+            return EvalResult(1, null)
+        end
+        if expr.value == "compile_lustgex" and arg_values.length() == 1 then
+            let lustgex_fn = find_exec_decl(exec_ir, "lustgex_compile")
+            if lustgex_fn.kind == "IRExecFn" then
+                return eval_exec_fn(exec_ir, "lustgex_compile", arg_values)
+            end
+        end
+        let fn_decl = find_exec_decl(exec_ir, expr.value)
+        if fn_decl.kind == "Missing" then
+            return EvalResult(1, EnumVal("", expr.value, arg_values))
+        end
+        if fn_decl.kind == "IRExecFn" then
+            return eval_exec_fn(exec_ir, expr.value, arg_values)
+        end
+    end
+    if expr.kind == "IRMethodCall" and expr.kids.length() > 0 then
+        let receiver = eval_ir_expr(expr.kids[0], exec_ir, names, values)
+        if receiver.ok == 0 then
+            return receiver
+        end
+        let arg_values: Dynamic = []
+        let arg_idx = 1
+        while arg_idx < expr.kids.length() do
+            let arg_value = eval_ir_expr(expr.kids[arg_idx], exec_ir, names, values)
+            if arg_value.ok == 0 then
+                return arg_value
+            end
+            arg_values.push(arg_value.value)
+            arg_idx = arg_idx + 1
+        end
+        if expr.value == "length" then
+            return EvalResult(1, receiver.value.length())
+        end
+        if expr.value == "at" and arg_values.length() == 1 then
+            let idx = arg_values[0]
+            if idx >= 0 and idx < receiver.value.length() then
+                return EvalResult(1, receiver.value[idx])
+            end
+            return EvalResult(1, null)
+        end
+        if expr.value == "slice" and arg_values.length() == 2 then
+            let start = arg_values[0]
+            let finish = arg_values[1]
+            if start < 0 or finish < start then
+                return EvalResult(1, null)
+            end
+            return EvalResult(1, string_slice_simple(receiver.value, start, finish))
+        end
+        if expr.value == "push" and arg_values.length() == 1 then
+            receiver.value.push(arg_values[0])
+            return EvalResult(1, null)
+        end
+        if expr.value == "trim" and arg_values.length() == 0 then
+            return EvalResult(1, trim_spaces(receiver.value))
+        end
+        if expr.value == "contains" and arg_values.length() == 1 then
+            if string_contains(receiver.value, arg_values[0]) then
+                return EvalResult(1, 1)
+            end
+            return EvalResult(1, 0)
+        end
+        if expr.value == "split" and arg_values.length() == 1 then
+            return EvalResult(1, string_split(receiver.value, arg_values[0]))
+        end
+        if expr.value == "replace" and arg_values.length() == 2 then
+            return EvalResult(1, string_replace(receiver.value, arg_values[0], arg_values[1]))
+        end
+        if expr.value != "length" and expr.value != "at" and expr.value != "slice" and expr.value != "push" and expr.value != "trim" and expr.value != "contains" and expr.value != "split" and expr.value != "replace" then
+            let method_name = receiver.value.tag + "." + expr.value
+            let method_decl = find_exec_decl(exec_ir, method_name)
+            if method_decl.kind == "IRExecMethod" then
+                return eval_exec_method(exec_ir, method_name, receiver.value, arg_values)
+            end
+        end
+    end
+    return EvalResult(0, null)
+end
+
+fn eval_ir_body(body, exec_ir, state)
+    let stmt_idx = 0
+    while stmt_idx < body.kids.length() and state.ok == 1 and state.returned == 0 do
+        let stmt = body.kids[stmt_idx]
+                        if stmt.kind == "IRNoop" then
+                            state.ok = state.ok
+                        else
+                        if stmt.kind == "IRLet" and stmt.kids.length() == 1 then
+            let value = eval_ir_expr(stmt.kids[0], exec_ir, state.names, state.values)
+            if value.ok == 0 then
+                state.ok = 0
+            else
+                state.names.push(stmt.value)
+                state.values.push(value.value)
+            end
+            else
+                if stmt.kind == "IRAssign" and stmt.kids.length() == 2 then
+                    let value = eval_ir_expr(stmt.kids[1], exec_ir, state.names, state.values)
+                    if value.ok == 0 then
+                        state.ok = 0
+                    else
+                        if stmt.kids[0].kind == "IRIdent" then
+                            if env_set(state.names, state.values, stmt.kids[0].value, value.value) == 0 then
+                                state.ok = 0
+                            end
+                        else
+                            if stmt.kids[0].kind == "IRMember" and stmt.kids[0].kids.length() == 1 then
+                                let target = eval_ir_expr(stmt.kids[0].kids[0], exec_ir, state.names, state.values)
+                                if target.ok == 0 then
+                                    state.ok = 0
+                                else
+                                    if struct_set(target.value, stmt.kids[0].value, value.value) == 0 then
+                                        state.ok = 0
+                                    end
+                                end
+                            else
+                                state.ok = 0
+                            end
+                        end
+                    end
+                else
+                if stmt.kind == "IRReturn" and stmt.kids.length() == 1 then
+                    let value = eval_ir_expr(stmt.kids[0], exec_ir, state.names, state.values)
+                    if value.ok == 0 then
+                        state.ok = 0
+                    else
+                        state.returned = 1
+                        state.value = value.value
+                    end
+                else
+                    if stmt.kind == "IRExprStmt" and stmt.kids.length() == 1 then
+                        let value = eval_ir_expr(stmt.kids[0], exec_ir, state.names, state.values)
+                        if value.ok == 0 then
+                            state.ok = 0
+                        end
+                    else
+                        if stmt.kind == "IRPrint" then
+                            let parts = []
+                            let part_idx = 0
+                            while part_idx < stmt.kids.length() do
+                                let value = eval_ir_expr(stmt.kids[part_idx], exec_ir, state.names, state.values)
+                                if value.ok == 0 then
+                                    state.ok = 0
+                                else
+                                    parts.push(to_string(value.value))
+                                end
+                                part_idx = part_idx + 1
+                            end
+                            if state.ok == 1 then
+                                print(join_with_space(parts))
+                            end
+                        else
+                            if stmt.kind == "IRIf" and stmt.kids.length() >= 2 then
+                                let cond = eval_ir_expr(stmt.kids[0], exec_ir, state.names, state.values)
+                                if cond.ok == 0 then
+                                    state.ok = 0
+                                else
+                                    if cond.value then
+                                        eval_ir_body(stmt.kids[1], exec_ir, state)
+                                    else
+                                        if stmt.kids.length() >= 3 then
+                                            eval_ir_body(stmt.kids[2], exec_ir, state)
+                                        end
+                                    end
+                                end
+                            else
+                                if stmt.kind == "IRMatch" and stmt.kids.length() >= 2 then
+                                    let target = eval_ir_expr(stmt.kids[0], exec_ir, state.names, state.values)
+                                    if target.ok == 0 then
+                                        state.ok = 0
+                                    else
+                                        let case_idx = 0
+                                        let matched = 0
+                                        while case_idx < stmt.kids[1].kids.length() and matched == 0 and state.ok == 1 and state.returned == 0 do
+                                            let case_node = stmt.kids[1].kids[case_idx]
+                                            if case_node.kids.length() >= 3 then
+                                                let case_bindings = MatchBindingInfo([], [])
+                                                if match_ir_pattern(case_node.kids[0], target.value, case_bindings) == 1 then
+                                                    let bind_idx = 0
+                                                    while bind_idx < case_bindings.names.length() do
+                                                        state.names.push(case_bindings.names[bind_idx])
+                                                        state.values.push(case_bindings.values[bind_idx])
+                                                        bind_idx = bind_idx + 1
+                                                    end
+                                                    let guard_ok = 1
+                                                    if case_node.kids[1].kind != "IRExprUnsupported" and case_node.kids[1].value != "NoGuard" then
+                                                        let guard = eval_ir_expr(case_node.kids[1], exec_ir, state.names, state.values)
+                                                        if guard.ok == 0 then
+                                                            state.ok = 0
+                                                        else
+                                                            guard_ok = guard.value
+                                                        end
+                                                    end
+                                                    if guard_ok then
+                                                        eval_ir_body(case_node.kids[2], exec_ir, state)
+                                                        matched = 1
+                                                    end
+                                                    let pop_idx = 0
+                                                    while pop_idx < case_bindings.names.length() do
+                                                        state.names = drop_last(state.names)
+                                                        state.values = drop_last(state.values)
+                                                        pop_idx = pop_idx + 1
+                                                    end
+                                                end
+                                            end
+                                            case_idx = case_idx + 1
+                                        end
+                                    end
+                                else
+                                if stmt.kind == "IRWhile" and stmt.kids.length() >= 2 then
+                                    let loops = 0
+                                    while loops < 1000 and state.ok == 1 and state.returned == 0 do
+                                        let cond = eval_ir_expr(stmt.kids[0], exec_ir, state.names, state.values)
+                                        if cond.ok == 0 then
+                                            state.ok = 0
+                                        else
+                                            if cond.value then
+                                                eval_ir_body(stmt.kids[1], exec_ir, state)
+                                            else
+                                                loops = 1000
+                                            end
+                                        end
+                                        if cond.ok == 1 and cond.value then
+                                            loops = loops + 1
+                                        end
+                                    end
+                                else
+                                    state.ok = 0
+                                end
+                                end
+                            end
+                        end
+                    end
+                end
+                        end
+            end
+        end
+        stmt_idx = stmt_idx + 1
+    end
+    return state
+end
+
+fn eval_exec_fn(exec_ir, name, args: Dynamic)
+    let fn_decl = find_exec_decl(exec_ir, name)
+    if fn_decl.kind != "IRExecFn" and fn_decl.kind != "IRExecMethod" and fn_decl.kind != "IRExecTop" then
+        return EvalResult(0, null)
+    end
+    let env_names = []
+    let env_values = []
+    if fn_decl.kids.length() > 0 then
+        let params = fn_decl.kids[0]
+        let arg_idx = 0
+        while arg_idx < args.length() and arg_idx < params.names.length() do
+            env_names.push(params.names[arg_idx])
+            env_values.push(args[arg_idx])
+            arg_idx = arg_idx + 1
+        end
+    end
+    let state = EvalStateInfo(env_names, env_values, 0, null, 1)
+    if fn_decl.kids.length() > 1 then
+        eval_ir_body(fn_decl.kids[1], exec_ir, state)
+    end
+    if state.ok == 1 then
+        if state.returned == 1 then
+            return EvalResult(1, state.value)
+        end
+        return EvalResult(1, null)
+    end
+    return EvalResult(0, null)
+end
+
+fn eval_exec_method(exec_ir, name, self_value, args: Dynamic)
+    let fn_decl = find_exec_decl(exec_ir, name)
+    if fn_decl.kind != "IRExecMethod" then
+        return EvalResult(0, null)
+    end
+    let env_names = ["self"]
+    let env_values = [self_value]
+    if fn_decl.kids.length() > 0 then
+        let params = fn_decl.kids[0]
+        let arg_idx = 0
+        while arg_idx < args.length() and arg_idx < params.names.length() do
+            env_names.push(params.names[arg_idx])
+            env_values.push(args[arg_idx])
+            arg_idx = arg_idx + 1
+        end
+    end
+    let state = EvalStateInfo(env_names, env_values, 0, null, 1)
+    if fn_decl.kids.length() > 1 then
+        eval_ir_body(fn_decl.kids[1], exec_ir, state)
+    end
+    if state.ok == 1 then
+        if state.returned == 1 then
+            return EvalResult(1, state.value)
+        end
+        return EvalResult(1, null)
+    end
+    return EvalResult(0, null)
+end
+
+fn demo_eval_exec(exec_ir)
+    let top = find_exec_decl(exec_ir, "__top")
+    if top.kind == "IRExecTop" then
+        let value = eval_exec_fn(exec_ir, "__top", [])
+        if value.ok == 1 then
+            print("EVAL top " + to_string(value.value))
+        else
+            print("EVAL top unsupported")
+        end
+        return 0
+    end
+    let main_fn = find_exec_decl(exec_ir, "main")
+    if main_fn.kind == "IRExecFn" then
+        let value = eval_exec_fn(exec_ir, "main", [])
+        if value.ok == 1 then
+            print("EVAL main " + to_string(value.value))
+        else
+            print("EVAL main unsupported")
+        end
+        return 0
+    end
+    let fact = find_exec_decl(exec_ir, "factorial")
+    if fact.kind == "IRExecFn" then
+        let value = eval_exec_fn(exec_ir, "factorial", [5])
+        if value.ok == 1 then
+            print("EVAL factorial(5) " + to_string(value.value))
+        else
+            print("EVAL factorial(5) unsupported")
+        end
+    end
+    return 0
+end
+
+fn resolve_cli_path(path)
+    if path.contains("/") then
+        return path
+    end
+    return "../" + path
+end
+
+fn run_parser(path)
+    let source = read_file(resolve_cli_path(path))
+    let tokens = lex(source)
+    let parser = Parser(tokens)
+    let program = p_parse_program(parser)
+    let analysis = build_analysis(program)
+    let errors = validate_ast(program)
+    let symbol_errors = analyze_symbol_errors(program)
+    let symbol_summary = analyze_symbols(program, symbol_errors.length())
+    let module_info = collect_module_info(program, analysis)
+    let module_ir = lower_decl_ir(program, analysis)
+    let exec_ir = lower_exec_ir(program, analysis)
+    if errors.length() == 0 then
+        print("VALID ast")
+    else
+        print("INVALID ast")
+        let error_idx = 0
+        while error_idx < errors.length() do
+            print("  " + errors[error_idx])
+            error_idx = error_idx + 1
+        end
+    end
+    if symbol_errors.length() == 0 then
+        print("VALID symbols")
+    else
+        print("INVALID symbols")
+        let symbol_error_idx = 0
+        while symbol_error_idx < symbol_errors.length() do
+            print("  " + symbol_errors[symbol_error_idx])
+            symbol_error_idx = symbol_error_idx + 1
+        end
+    end
+    let summary_line = "SYMBOLS"
+    let summary_idx = 0
+    while summary_idx < symbol_summary.names.length() do
+        summary_line = summary_line + " " + symbol_summary.names[summary_idx]
+        summary_idx = summary_idx + 1
+    end
+    print(summary_line)
+    print_named_summary("MODULE", module_info.names)
+    let module_idx = 0
+    while module_idx < module_info.kids.length() do
+        let module_item = module_info.kids[module_idx]
+        let module_line = "  " + module_item.kind + " " + module_item.value
+        let module_name_idx = 0
+        while module_name_idx < module_item.names.length() do
+            module_line = module_line + " " + module_item.names[module_name_idx]
+            module_name_idx = module_name_idx + 1
+        end
+        print(module_line)
+        module_idx = module_idx + 1
+    end
+    print_named_summary("IR", module_ir.names)
+    let ir_idx = 0
+    while ir_idx < module_ir.kids.length() do
+        let ir_item = module_ir.kids[ir_idx]
+        let ir_line = "  " + ir_item.kind + " " + ir_item.value
+        let ir_name_idx = 0
+        while ir_name_idx < ir_item.names.length() do
+            ir_line = ir_line + " " + ir_item.names[ir_name_idx]
+            ir_name_idx = ir_name_idx + 1
+        end
+        print(ir_line)
+        let ir_child_idx = 0
+        while ir_child_idx < ir_item.kids.length() do
+            let ir_child = ir_item.kids[ir_child_idx]
+            let child_line = "    " + ir_child.kind + " " + ir_child.value
+            let child_name_idx = 0
+            while child_name_idx < ir_child.names.length() do
+                child_line = child_line + " " + ir_child.names[child_name_idx]
+                child_name_idx = child_name_idx + 1
+            end
+            print(child_line)
+            ir_child_idx = ir_child_idx + 1
+        end
+        ir_idx = ir_idx + 1
+    end
+    print_named_summary("EXEC", exec_ir.names)
+    let exec_idx = 0
+    while exec_idx < exec_ir.kids.length() do
+        print_ir_tree(exec_ir.kids[exec_idx], 1)
+        exec_idx = exec_idx + 1
+    end
+    demo_eval_exec(exec_ir)
+    let pending_nodes = [program]
+    let pending_depths = [0]
+    while pending_nodes.length() > 0 do
+        let current = pending_nodes[0]
+        let current_depth = pending_depths[0]
+        let indent = ""
+        let step = 0
+        while step < current_depth do
+            indent = indent + "  "
+            step = step + 1
+        end
+        let line = indent + current.kind
+        if current.value != "" then
+            line = line + " " + current.value
+        end
+        if current.names.length() > 0 then
+            let names = ""
+            let name_idx = 0
+            while name_idx < current.names.length() do
+                if name_idx > 0 then
+                    names = names + ","
+                end
+                names = names + current.names[name_idx]
+                name_idx = name_idx + 1
+            end
+            line = line + " (" + names + ")"
+        end
+        print(line)
+        let next_nodes = []
+        let next_depths = []
+        let child_idx = 0
+        while child_idx < current.kids.length() do
+            next_nodes.push(current.kids[child_idx])
+            next_depths.push(current_depth + 1)
+            child_idx = child_idx + 1
+        end
+        let rest_idx = 1
+        while rest_idx < pending_nodes.length() do
+            next_nodes.push(pending_nodes[rest_idx])
+            next_depths.push(pending_depths[rest_idx])
+            rest_idx = rest_idx + 1
+        end
+        pending_nodes = next_nodes
+        pending_depths = next_depths
+    end
+end
+
+print("BOOT parser")
+let cli_args = get_args()
+if cli_args.length() == 0 then
+    print("usage: lust_src/parser.lust <file>")
+else
+    run_parser(cli_args[0])
+end

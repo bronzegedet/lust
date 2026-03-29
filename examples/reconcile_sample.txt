@@ -1,0 +1,8 @@
+THIS CUSTOMER IS A CURRENT STANDING ACCOUNT
+BR/ORD#|78421|Jolly Industrial Supply
+misc text before items
+CODE|DESCRIPTION|SYSTEM_QTY|PHYSICAL_QTY
+A-100|Widget Red|12|12
+B-205|Sprocket Blue|4|3
+C-900|Cable Pack|19|19
+*********

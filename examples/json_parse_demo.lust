@@ -1,0 +1,7 @@
+let data = json_parse("{\"name\":\"Ada\",\"scores\":[3,5],\"meta\":{\"active\":true}}")
+
+print("name", data["name"])
+print("score", data["scores"][1])
+print("active", data["meta"]["active"])
+print("type", type_of(data))
+print("roundtrip", json_encode(data))

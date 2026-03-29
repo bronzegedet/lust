@@ -1,0 +1,11 @@
+fn main()
+    let [name, id] = " Jacob ,101 " |> split(",")
+    let [code, _, qty] = "SKU|skip|3" |> split("|")
+
+    print("name=${name.trim()}")
+    print("id=${id.trim()}")
+    print("code=${code}")
+    print("qty=${qty}")
+end
+
+main()

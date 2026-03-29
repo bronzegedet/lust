@@ -1,0 +1,15 @@
+import "draw"
+
+fn grid(width, height, spacing, color)
+    let x = 0
+    while x <= width do
+        line(x, 0, x, height, color)
+        x = x + spacing
+    end
+
+    let y = 0
+    while y <= height do
+        line(0, y, width, y, color)
+        y = y + spacing
+    end
+end

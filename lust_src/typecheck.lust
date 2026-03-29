@@ -1,0 +1,2457 @@
+type TypeRef = { kind: String, name: String, inner: Dynamic }
+type TypeError = { line: Number, context: String, expected: Dynamic, actual: Dynamic }
+
+fn TypeAtom(kind: String, name: String) -> TypeRef
+    return TypeRef { kind: kind, name: name, inner: null }
+end
+
+fn TypeList(inner: Dynamic) -> TypeRef
+    return TypeRef { kind: "List", name: "List", inner: inner }
+end
+
+fn TypeMismatch(line: Number, context: String, expected: Dynamic, actual: Dynamic) -> TypeError
+    return TypeError { line: line, context: context, expected: expected, actual: actual }
+end
+
+fn list_contains(items, value: String) -> Number
+    let idx = 0
+    while idx < items.length() do
+        if items[idx] == value then
+            return 1
+        end
+        idx = idx + 1
+    end
+    return 0
+end
+
+fn starts_with(text: String, prefix: String) -> Number
+    if text.length() < prefix.length() then
+        return 0
+    end
+    if text.slice(0, prefix.length()) == prefix then
+        return 1
+    end
+    return 0
+end
+
+fn ends_with(text: String, suffix: String) -> Number
+    if text.length() < suffix.length() then
+        return 0
+    end
+    if text.slice(text.length() - suffix.length(), text.length()) == suffix then
+        return 1
+    end
+    return 0
+end
+
+fn digit_value(ch: String) -> Number
+    if ch == "0" then
+        return 0
+    end
+    if ch == "1" then
+        return 1
+    end
+    if ch == "2" then
+        return 2
+    end
+    if ch == "3" then
+        return 3
+    end
+    if ch == "4" then
+        return 4
+    end
+    if ch == "5" then
+        return 5
+    end
+    if ch == "6" then
+        return 6
+    end
+    if ch == "7" then
+        return 7
+    end
+    if ch == "8" then
+        return 8
+    end
+    if ch == "9" then
+        return 9
+    end
+    return 0
+end
+
+fn parse_number_text(text: String) -> Number
+    let idx = 0
+    let negative = 0
+    if text.length() > 0 and text.at(0) == "-" then
+        negative = 1
+        idx = 1
+    end
+    let whole = 0
+    while idx < text.length() and text.at(idx) != "." do
+        whole = whole * 10 + digit_value(text.at(idx))
+        idx = idx + 1
+    end
+    let frac = 0
+    let scale = 1
+    if idx < text.length() and text.at(idx) == "." then
+        idx = idx + 1
+        while idx < text.length() do
+            frac = frac * 10 + digit_value(text.at(idx))
+            scale = scale * 10
+            idx = idx + 1
+        end
+    end
+    let value = whole + frac / scale
+    if negative == 1 then
+        return 0 - value
+    end
+    return value
+end
+
+fn decode_bridge_item(text: String) -> String
+    if text == "@" then
+        return ""
+    end
+    return text
+end
+
+fn split_bridge_list(text: String) -> Dynamic
+    if text == "" then
+        return []
+    end
+    let items = text.split("|")
+    let out: Dynamic = []
+    let idx = 0
+    while idx < items.length() do
+        out.push(decode_bridge_item(items[idx]))
+        idx = idx + 1
+    end
+    return out
+end
+
+fn split_bridge_numbers(text: String) -> Dynamic
+    if text == "" then
+        return []
+    end
+    let items = text.split("|")
+    let out: Dynamic = []
+    let idx = 0
+    while idx < items.length() do
+        out.push(parse_number_text(items[idx]))
+        idx = idx + 1
+    end
+    return out
+end
+
+fn split_comma_list(text: String) -> Dynamic
+    if text == "" then
+        return []
+    end
+    return text.split(",")
+end
+
+fn split_top_level_args(text: String) -> Dynamic
+    if text == "" then
+        return []
+    end
+    let out: Dynamic = []
+    let current = ""
+    let depth = 0
+    let idx = 0
+    while idx < text.length() do
+        let ch = text.at(idx)
+        if ch == "," and depth == 0 then
+            out.push(current)
+            current = ""
+        else
+            current = current + ch
+            if ch == "(" or ch == "[" or ch == "{" then
+                depth = depth + 1
+            end
+            if ch == ")" or ch == "]" or ch == "}" then
+                depth = depth - 1
+            end
+        end
+        idx = idx + 1
+    end
+    out.push(current)
+    return out
+end
+
+fn debug_enabled() -> Number
+    let value = get_env("LUST_DEBUG")
+    if value == "" or value == "0" then
+        return 0
+    end
+    return 1
+end
+
+fn debug_if(label: String, value: Dynamic) -> Dynamic
+    if debug_enabled() == 1 then
+        return debug(label, value)
+    end
+    return value
+end
+
+fn assert_eq(actual: Dynamic, expected: Dynamic, message: String) -> Number
+    if actual != expected then
+        assert(0, message + ": expected " + to_string(expected) + ", got " + to_string(actual))
+    end
+    return 1
+end
+
+fn panic_with(label: String, value: Dynamic) -> Number
+    panic(label + ": " + to_string(value))
+    return 0
+end
+
+fn declared_type_from_name(name: String, known_structs, known_enums) -> TypeRef
+    if name == "Number" then
+        return TypeAtom("Number", "Number")
+    end
+    if name == "String" then
+        return TypeAtom("String", "String")
+    end
+    if name == "Boolean" then
+        return TypeAtom("Boolean", "Boolean")
+    end
+    if name == "Dynamic" then
+        return TypeAtom("Dynamic", "Dynamic")
+    end
+    if starts_with(name, "List<") == 1 and ends_with(name, ">") == 1 then
+        let inner_name = name.slice(5, name.length() - 1)
+        return TypeList(declared_type_from_name(inner_name, known_structs, known_enums))
+    end
+    if list_contains(known_structs, name) == 1 then
+        return TypeAtom("Struct", name)
+    end
+    if list_contains(known_enums, name) == 1 then
+        return TypeAtom("Enum", name)
+    end
+    return TypeAtom("Dynamic", "Dynamic")
+end
+
+fn type_name(ty: Dynamic) -> String
+    if ty.kind == "List" then
+        return "List<" + type_name(ty.inner) + ">"
+    end
+    return ty.name
+end
+
+fn types_compatible(expected: Dynamic, actual: Dynamic) -> Number
+    if expected.kind == "Dynamic" or actual.kind == "Dynamic" then
+        return 1
+    end
+    if expected.kind == "List" and actual.kind == "List" then
+        return types_compatible(expected.inner, actual.inner)
+    end
+    if expected.kind != actual.kind then
+        return 0
+    end
+    if expected.name == actual.name then
+        return 1
+    end
+    return 0
+end
+
+fn unify_type(left: Dynamic, right: Dynamic) -> Dynamic
+    if left.kind == right.kind and left.name == right.name then
+        if left.kind == "List" then
+            return TypeList(unify_type(left.inner, right.inner))
+        end
+        return left
+    end
+    if left.kind == "Dynamic" then
+        return right
+    end
+    if right.kind == "Dynamic" then
+        return left
+    end
+    if left.kind == "List" and right.kind == "List" then
+        let inner = unify_type(left.inner, right.inner)
+        if inner.kind == "Dynamic" then
+            return TypeAtom("Dynamic", "Dynamic")
+        end
+        return TypeList(inner)
+    end
+    return TypeAtom("Dynamic", "Dynamic")
+end
+
+fn mismatch_message(err: Dynamic) -> String
+    let prefix = "Lust Error"
+    if err.line > 0 then
+        return prefix + " on line " + to_string(err.line) + ": type mismatch in " + err.context + ": expected " + type_name(err.expected) + ", got " + type_name(err.actual)
+    end
+    return prefix + ": type mismatch in " + err.context + ": expected " + type_name(err.expected) + ", got " + type_name(err.actual)
+end
+
+fn validate_declared_type(line: Number, context: String, declared_name: String, actual_name: String, known_structs, known_enums) -> Dynamic
+    let expected = declared_type_from_name(declared_name, known_structs, known_enums)
+    let actual = declared_type_from_name(actual_name, known_structs, known_enums)
+    if types_compatible(expected, actual) == 1 then
+        return null
+    end
+    return TypeMismatch(line, context, expected, actual)
+end
+
+fn validate_declared_type_with_explicit_dynamic(line: Number, context: String, declared_name: String, actual_name: String, known_structs, known_enums) -> Dynamic
+    if declared_name == "Dynamic" then
+        return null
+    end
+    return validate_declared_type(line, context, declared_name, actual_name, known_structs, known_enums)
+end
+
+fn validate_type_decl_fields(type_name: String, line: Number, field_names, declared_types, actual_types, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < field_names.length() and idx < declared_types.length() and idx < actual_types.length() do
+        let context = "field '" + type_name + "." + field_names[idx] + "'"
+        let err = validate_declared_type_with_explicit_dynamic(line, context, declared_types[idx], actual_types[idx], known_structs, known_enums)
+        if err != null then
+            errors.push(mismatch_message(err))
+        end
+        idx = idx + 1
+    end
+    return errors
+end
+
+fn validate_fn_signature(name: String, line: Number, param_names, declared_param_types, actual_param_types, declared_ret: String, actual_ret: String, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < param_names.length() and idx < declared_param_types.length() and idx < actual_param_types.length() do
+        let context = "parameter '" + param_names[idx] + "' in fn '" + name + "'"
+        let err = validate_declared_type_with_explicit_dynamic(line, context, declared_param_types[idx], actual_param_types[idx], known_structs, known_enums)
+        if err != null then
+            errors.push(mismatch_message(err))
+        end
+        idx = idx + 1
+    end
+    let ret_err = validate_declared_type_with_explicit_dynamic(line, "return value for fn '" + name + "'", declared_ret, actual_ret, known_structs, known_enums)
+    if ret_err != null then
+        errors.push(mismatch_message(ret_err))
+    end
+    return errors
+end
+
+fn field_type_for(struct_name: String, field_name: String, struct_names, field_structs, field_names, field_types, known_structs, known_enums) -> Dynamic
+    let idx = 0
+    while idx < field_structs.length() and idx < field_names.length() and idx < field_types.length() do
+        if field_structs[idx] == struct_name and field_names[idx] == field_name then
+            return declared_type_from_name(field_types[idx], known_structs, known_enums)
+        end
+        idx = idx + 1
+    end
+    return TypeAtom("Dynamic", "Dynamic")
+end
+
+fn variant_field_type_for(enum_name: String, variant_name: String, part_idx: Number, variant_enums, variant_names, variant_indices, variant_types, known_structs, known_enums) -> Dynamic
+    let idx = 0
+    while idx < variant_enums.length() and idx < variant_names.length() and idx < variant_indices.length() and idx < variant_types.length() do
+        if variant_enums[idx] == enum_name and variant_names[idx] == variant_name and variant_indices[idx] == part_idx then
+            return declared_type_from_name(variant_types[idx], known_structs, known_enums)
+        end
+        idx = idx + 1
+    end
+    return TypeAtom("Dynamic", "Dynamic")
+end
+
+fn bind_pattern_names(pattern_kind: String, pattern_name: String, child_kinds, child_names, child_tags, target_ty: Dynamic, struct_names, field_structs, field_names, field_types, variant_enums, variant_names, variant_indices, variant_types, known_structs, known_enums) -> Dynamic
+    if pattern_kind == "Bind" then
+        return [pattern_name, type_name(target_ty)]
+    end
+    if pattern_kind == "Wildcard" or pattern_kind == "Number" or pattern_kind == "String" or pattern_kind == "Bool" or pattern_kind == "Null" then
+        return []
+    end
+    if pattern_kind == "Struct" and target_ty.kind == "Struct" and target_ty.name == pattern_name then
+        let bindings: Dynamic = []
+        let idx = 0
+        while idx < child_kinds.length() and idx < child_names.length() and idx < child_tags.length() do
+            let field_ty = field_type_for(pattern_name, child_tags[idx], struct_names, field_structs, field_names, field_types, known_structs, known_enums)
+            let child_bindings = bind_pattern_names(child_kinds[idx], child_names[idx], [], [], [], field_ty, struct_names, field_structs, field_names, field_types, variant_enums, variant_names, variant_indices, variant_types, known_structs, known_enums)
+            let child_idx = 0
+            while child_idx < child_bindings.length() do
+                bindings.push(child_bindings[child_idx])
+                child_idx = child_idx + 1
+            end
+            idx = idx + 1
+        end
+        return bindings
+    end
+    if pattern_kind == "EnumVariant" and target_ty.kind == "Enum" then
+        let bindings: Dynamic = []
+        let idx = 0
+        while idx < child_kinds.length() and idx < child_names.length() do
+            let part_ty = variant_field_type_for(target_ty.name, pattern_name, idx, variant_enums, variant_names, variant_indices, variant_types, known_structs, known_enums)
+            let child_bindings = bind_pattern_names(child_kinds[idx], child_names[idx], [], [], [], part_ty, struct_names, field_structs, field_names, field_types, variant_enums, variant_names, variant_indices, variant_types, known_structs, known_enums)
+            let child_idx = 0
+            while child_idx < child_bindings.length() do
+                bindings.push(child_bindings[child_idx])
+                child_idx = child_idx + 1
+            end
+            idx = idx + 1
+        end
+        return bindings
+    end
+    return []
+end
+
+fn pattern_is_total(pattern_kind: String) -> Number
+    if pattern_kind == "Wildcard" or pattern_kind == "Bind" then
+        return 1
+    end
+    return 0
+end
+
+fn enum_variants_for(enum_name: String, variant_enums, variant_names) -> Dynamic
+    let items: Dynamic = []
+    let idx = 0
+    while idx < variant_enums.length() and idx < variant_names.length() do
+        if variant_enums[idx] == enum_name and list_contains(items, variant_names[idx]) == 0 then
+            items.push(variant_names[idx])
+        end
+        idx = idx + 1
+    end
+    return items
+end
+
+fn validate_enum_match_exhaustiveness(line: Number, enum_name: String, case_kinds, case_names, guard_flags, variant_enums, variant_names) -> Dynamic
+    let errors: Dynamic = []
+    let seen_variants: Dynamic = []
+    let seen_total = 0
+    let idx = 0
+    while idx < case_kinds.length() and idx < case_names.length() and idx < guard_flags.length() do
+        if seen_total == 1 then
+            errors.push("Lust Error on line " + to_string(line) + ": unreachable match case after a total case")
+            return errors
+        end
+        if guard_flags[idx] == 0 then
+            if case_kinds[idx] == "EnumVariant" then
+                seen_variants.push(case_names[idx])
+            end
+            if pattern_is_total(case_kinds[idx]) == 1 then
+                seen_total = 1
+            end
+        end
+        idx = idx + 1
+    end
+    if seen_total == 0 then
+        let expected = enum_variants_for(enum_name, variant_enums, variant_names)
+        let variant_idx = 0
+        while variant_idx < expected.length() do
+            if list_contains(seen_variants, expected[variant_idx]) == 0 then
+                errors.push("Lust Error on line " + to_string(line) + ": non-exhaustive match on enum " + enum_name + "; missing variants or `_` fallback")
+                return errors
+            end
+            variant_idx = variant_idx + 1
+        end
+    end
+    return errors
+end
+
+fn env_lookup(bindings, name: String) -> String
+    let idx = 0
+    while idx + 1 < bindings.length() do
+        if bindings[idx] == name then
+            return bindings[idx + 1]
+        end
+        idx = idx + 2
+    end
+    return "Dynamic"
+end
+
+fn env_bind(bindings, name: String, ty_name: String) -> Dynamic
+    let next_bindings: Dynamic = []
+    let idx = 0
+    let replaced = 0
+    while idx + 1 < bindings.length() do
+        if bindings[idx] == name then
+            next_bindings.push(name)
+            next_bindings.push(ty_name)
+            replaced = 1
+        else
+            next_bindings.push(bindings[idx])
+            next_bindings.push(bindings[idx + 1])
+        end
+        idx = idx + 2
+    end
+    if replaced == 0 then
+        next_bindings.push(name)
+        next_bindings.push(ty_name)
+    end
+    return next_bindings
+end
+
+fn validate_let_binding(bindings, line: Number, name: String, declared_name: String, actual_name: String, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let err = validate_declared_type_with_explicit_dynamic(line, "initializer for '" + name + "'", declared_name, actual_name, known_structs, known_enums)
+    if err != null then
+        errors.push(mismatch_message(err))
+    end
+    return errors
+end
+
+fn type_for_let_binding(declared_name: String, actual_name: String, known_structs, known_enums) -> Dynamic
+    if declared_name != "" then
+        return declared_type_from_name(declared_name, known_structs, known_enums)
+    end
+    return declared_type_from_name(actual_name, known_structs, known_enums)
+end
+
+fn merge_binding_envs(left_bindings, right_bindings, known_structs, known_enums) -> Dynamic
+    let merged: Dynamic = []
+    let idx = 0
+    while idx + 1 < left_bindings.length() do
+        let left_name = left_bindings[idx]
+        let left_ty = left_bindings[idx + 1]
+        let right_ty = env_lookup(right_bindings, left_name)
+        if right_ty == "Dynamic" then
+            merged = env_bind(merged, left_name, left_ty)
+        else
+            merged = env_bind(
+                merged,
+                left_name,
+                type_name(
+                    unify_type(
+                        declared_type_from_name(left_ty, known_structs, known_enums),
+                        declared_type_from_name(right_ty, known_structs, known_enums)
+                    )
+                )
+            )
+        end
+        idx = idx + 2
+    end
+    let right_idx = 0
+    while right_idx + 1 < right_bindings.length() do
+        let right_name = right_bindings[right_idx]
+        if env_lookup(merged, right_name) == "Dynamic" and env_lookup(left_bindings, right_name) == "Dynamic" then
+            merged = env_bind(merged, right_name, right_bindings[right_idx + 1])
+        end
+        right_idx = right_idx + 2
+    end
+    return merged
+end
+
+fn validate_assignment(bindings, line: Number, name: String, actual_name: String, known_structs, known_enums) -> Dynamic
+    let expected_name = env_lookup(bindings, name)
+    let actual = declared_type_from_name(actual_name, known_structs, known_enums)
+    if expected_name == "Dynamic" then
+        return null
+    end
+    let expected = declared_type_from_name(expected_name, known_structs, known_enums)
+    if types_compatible(expected, actual) == 1 then
+        return null
+    end
+    return mismatch_message(TypeMismatch(line, "assignment to '" + name + "'", expected, actual))
+end
+
+fn apply_assignment(bindings, name: String, actual_name: String, known_structs, known_enums) -> Dynamic
+    let expected_name = env_lookup(bindings, name)
+    let actual = declared_type_from_name(actual_name, known_structs, known_enums)
+    if expected_name == "Dynamic" then
+        return env_bind(bindings, name, type_name(actual))
+    end
+    return env_bind(
+        bindings,
+        name,
+        type_name(unify_type(declared_type_from_name(expected_name, known_structs, known_enums), actual))
+    )
+end
+
+fn validate_identifier_use(bindings, line: Number, name: String) -> Dynamic
+    let ty = env_lookup(bindings, name)
+    if ty == "Dynamic" then
+        return "Lust Error on line " + to_string(line) + ": unknown identifier '" + name + "'"
+    end
+    return null
+end
+
+fn validate_return_type(line: Number, declared_ret: String, actual_ret: String, known_structs, known_enums) -> Dynamic
+    let err = validate_declared_type_with_explicit_dynamic(line, "return value", declared_ret, actual_ret, known_structs, known_enums)
+    if err != null then
+        return mismatch_message(err)
+    end
+    return null
+end
+
+fn validate_duplicate_names(kind: String, names, line: Number) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < names.length() do
+        let seen = 0
+        let prev = 0
+        while prev < idx do
+            if names[prev] == names[idx] then
+                seen = 1
+            end
+            prev = prev + 1
+        end
+        if seen == 1 then
+            errors.push("Lust Error on line " + to_string(line) + ": duplicate " + kind + " name '" + names[idx] + "'")
+        end
+        idx = idx + 1
+    end
+    return errors
+end
+
+fn validate_param_local_collisions(param_names, local_names, line: Number) -> Dynamic
+    let errors: Dynamic = []
+    let local_idx = 0
+    while local_idx < local_names.length() do
+        let param_idx = 0
+        let seen = 0
+        while param_idx < param_names.length() do
+            if param_names[param_idx] == local_names[local_idx] then
+                seen = 1
+            end
+            param_idx = param_idx + 1
+        end
+        if seen == 1 then
+            errors.push("Lust Error on line " + to_string(line) + ": local name '" + local_names[local_idx] + "' collides with parameter name")
+        end
+        local_idx = local_idx + 1
+    end
+    return errors
+end
+
+fn binding_names(bindings) -> Dynamic
+    let names: Dynamic = []
+    let idx = 0
+    while idx + 1 < bindings.length() do
+        names.push(bindings[idx])
+        idx = idx + 2
+    end
+    return names
+end
+
+fn validate_pattern_binding_collisions(pattern_bindings, existing_names, line: Number) -> Dynamic
+    let errors: Dynamic = []
+    let pattern_names = binding_names(pattern_bindings)
+    let dup_errors = validate_duplicate_names("pattern binding", pattern_names, line)
+    let dup_idx = 0
+    while dup_idx < dup_errors.length() do
+        errors.push(dup_errors[dup_idx])
+        dup_idx = dup_idx + 1
+    end
+
+    let pat_idx = 0
+    while pat_idx < pattern_names.length() do
+        let existing_idx = 0
+        let seen = 0
+        while existing_idx < existing_names.length() do
+            if existing_names[existing_idx] == pattern_names[pat_idx] then
+                seen = 1
+            end
+            existing_idx = existing_idx + 1
+        end
+        if seen == 1 then
+            errors.push("Lust Error on line " + to_string(line) + ": pattern binding '" + pattern_names[pat_idx] + "' collides with existing scope name")
+        end
+        pat_idx = pat_idx + 1
+    end
+    return errors
+end
+
+fn validate_call_args(fn_name: String, line: Number, declared_param_types, actual_arg_types, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < declared_param_types.length() and idx < actual_arg_types.length() do
+        let err = validate_declared_type_with_explicit_dynamic(
+            line,
+            "argument " + to_string(idx + 1) + " in call to '" + fn_name + "'",
+            declared_param_types[idx],
+            actual_arg_types[idx],
+            known_structs,
+            known_enums
+        )
+        if err != null then
+            errors.push(mismatch_message(err))
+        end
+        idx = idx + 1
+    end
+    if declared_param_types.length() != actual_arg_types.length() then
+        errors.push(
+            "Lust Error on line " + to_string(line) + ": arity mismatch in call to '" + fn_name + "': expected " +
+                to_string(declared_param_types.length()) + ", got " + to_string(actual_arg_types.length())
+        )
+    end
+    return errors
+end
+
+fn validate_struct_literal(struct_name: String, line: Number, field_names, declared_field_types, actual_field_types, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < field_names.length() and idx < declared_field_types.length() and idx < actual_field_types.length() do
+        let err = validate_declared_type_with_explicit_dynamic(
+            line,
+            "field '" + struct_name + "." + field_names[idx] + "' in literal",
+            declared_field_types[idx],
+            actual_field_types[idx],
+            known_structs,
+            known_enums
+        )
+        if err != null then
+            errors.push(mismatch_message(err))
+        end
+        idx = idx + 1
+    end
+    if field_names.length() != declared_field_types.length() or field_names.length() != actual_field_types.length() then
+        errors.push(
+            "Lust Error on line " + to_string(line) + ": arity mismatch in struct literal '" + struct_name + "'"
+        )
+    end
+    return errors
+end
+
+fn validate_enum_constructor(enum_name: String, variant_name: String, line: Number, declared_payload_types, actual_payload_types, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < declared_payload_types.length() and idx < actual_payload_types.length() do
+        let err = validate_declared_type_with_explicit_dynamic(
+            line,
+            "payload " + to_string(idx) + " in constructor '" + enum_name + "." + variant_name + "'",
+            declared_payload_types[idx],
+            actual_payload_types[idx],
+            known_structs,
+            known_enums
+        )
+        if err != null then
+            errors.push(mismatch_message(err))
+        end
+        idx = idx + 1
+    end
+    if declared_payload_types.length() != actual_payload_types.length() then
+        errors.push(
+            "Lust Error on line " + to_string(line) + ": arity mismatch in constructor '" + enum_name + "." + variant_name + "': expected " +
+                to_string(declared_payload_types.length()) + ", got " + to_string(actual_payload_types.length())
+        )
+    end
+    return errors
+end
+
+fn validate_binary_op(op: String, left_type: String, right_type: String, line: Number, known_structs, known_enums) -> Dynamic
+    if op == "+" or op == "-" or op == "*" or op == "/" then
+        let left_err = validate_declared_type_with_explicit_dynamic(line, "left operand of '" + op + "'", "Number", left_type, known_structs, known_enums)
+        if left_err != null then
+            return mismatch_message(left_err)
+        end
+        let right_err = validate_declared_type_with_explicit_dynamic(line, "right operand of '" + op + "'", "Number", right_type, known_structs, known_enums)
+        if right_err != null then
+            return mismatch_message(right_err)
+        end
+        return null
+    end
+    if op == "==" or op == "!=" then
+        let left = declared_type_from_name(left_type, known_structs, known_enums)
+        let right = declared_type_from_name(right_type, known_structs, known_enums)
+        if types_compatible(left, right) == 1 then
+            return null
+        end
+        return "Lust Error on line " + to_string(line) + ": incompatible operands for '" + op + "': " + left_type + " and " + right_type
+    end
+    if op == "<" or op == ">" or op == "<=" or op == ">=" then
+        let left_err = validate_declared_type_with_explicit_dynamic(line, "left operand of '" + op + "'", "Number", left_type, known_structs, known_enums)
+        if left_err != null then
+            return mismatch_message(left_err)
+        end
+        let right_err = validate_declared_type_with_explicit_dynamic(line, "right operand of '" + op + "'", "Number", right_type, known_structs, known_enums)
+        if right_err != null then
+            return mismatch_message(right_err)
+        end
+        return null
+    end
+    return "Lust Error on line " + to_string(line) + ": unsupported binary operator '" + op + "'"
+end
+
+fn validate_condition_type(line: Number, actual_type: String, known_structs, known_enums) -> Dynamic
+    let err = validate_declared_type_with_explicit_dynamic(line, "condition", "Boolean", actual_type, known_structs, known_enums)
+    if err != null then
+        return mismatch_message(err)
+    end
+    return null
+end
+
+fn validate_call_stmt(bindings, line: Number, target_name: String, fn_name: String, declared_param_types, actual_arg_types, result_type: String, known_structs, known_enums) -> Dynamic
+    let errors = validate_call_args(fn_name, line, declared_param_types, actual_arg_types, known_structs, known_enums)
+    let next_bindings = bindings
+    if errors.length() == 0 and target_name != "" then
+        next_bindings = env_bind(next_bindings, target_name, result_type)
+    end
+    return [next_bindings, errors]
+end
+
+fn validate_method_call(receiver_name: String, receiver_actual_type: String, method_name: String, receiver_expected_type: String, declared_param_types, actual_arg_types, line: Number, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let receiver_err = validate_declared_type_with_explicit_dynamic(
+        line,
+        "receiver in method call '" + receiver_name + "." + method_name + "'",
+        receiver_expected_type,
+        receiver_actual_type,
+        known_structs,
+        known_enums
+    )
+    if receiver_err != null then
+        errors.push(mismatch_message(receiver_err))
+    end
+    let arg_errors = validate_call_args(method_name, line, declared_param_types, actual_arg_types, known_structs, known_enums)
+    let idx = 0
+    while idx < arg_errors.length() do
+        errors.push(arg_errors[idx])
+        idx = idx + 1
+    end
+    return errors
+end
+
+fn check_method_call_flow(bindings, target_name: String, receiver_name: String, receiver_actual_type: String, receiver_expected_type: String, method_name: String, declared_param_types, actual_arg_types, result_type: String, line: Number, use_name: String, return_actual_type: String, fn_return_type: String, known_structs, known_enums) -> Dynamic
+    let errors = validate_method_call(
+        receiver_name,
+        receiver_actual_type,
+        method_name,
+        receiver_expected_type,
+        declared_param_types,
+        actual_arg_types,
+        line,
+        known_structs,
+        known_enums
+    )
+    let next_bindings = bindings
+    if errors.length() == 0 and target_name != "" then
+        next_bindings = env_bind(next_bindings, target_name, result_type)
+    end
+    let use_err = validate_identifier_use(next_bindings, line + 1, use_name)
+    if use_err != null then
+        errors.push(use_err)
+    end
+    let return_err = validate_return_type(line + 2, fn_return_type, return_actual_type, known_structs, known_enums)
+    if return_err != null then
+        errors.push(return_err)
+    end
+    return [next_bindings, errors]
+end
+
+fn check_call_flow(bindings, target_name: String, fn_name: String, declared_param_types, actual_arg_types, result_type: String, line: Number, use_name: String, return_actual_type: String, fn_return_type: String, known_structs, known_enums) -> Dynamic
+    let call_result = validate_call_stmt(bindings, line, target_name, fn_name, declared_param_types, actual_arg_types, result_type, known_structs, known_enums)
+    let next_bindings = call_result[0]
+    let errors: Dynamic = []
+    let call_errors = call_result[1]
+    let idx = 0
+    while idx < call_errors.length() do
+        errors.push(call_errors[idx])
+        idx = idx + 1
+    end
+    let use_err = validate_identifier_use(next_bindings, line + 1, use_name)
+    if use_err != null then
+        errors.push(use_err)
+    end
+    let return_err = validate_return_type(line + 2, fn_return_type, return_actual_type, known_structs, known_enums)
+    if return_err != null then
+        errors.push(return_err)
+    end
+    return [next_bindings, errors]
+end
+
+fn check_stmt_sequence_from(bindings, stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, fn_return_type: String, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < stmt_kinds.length() and idx < stmt_lines.length() and idx < stmt_names.length() and idx < stmt_declared_types.length() and idx < stmt_actual_types.length() do
+        if stmt_kinds[idx] == "let" then
+            let let_errors = validate_let_binding(bindings, stmt_lines[idx], stmt_names[idx], stmt_declared_types[idx], stmt_actual_types[idx], known_structs, known_enums)
+            if let_errors.length() == 0 then
+                bindings.push(stmt_names[idx])
+                bindings.push(type_name(type_for_let_binding(stmt_declared_types[idx], stmt_actual_types[idx], known_structs, known_enums)))
+            else
+                let err_idx = 0
+                while err_idx < let_errors.length() do
+                    errors.push(let_errors[err_idx])
+                    err_idx = err_idx + 1
+                end
+            end
+        end
+        if stmt_kinds[idx] == "assign" then
+            let assign_err = validate_assignment(bindings, stmt_lines[idx], stmt_names[idx], stmt_actual_types[idx], known_structs, known_enums)
+            if assign_err != null then
+                errors.push(assign_err)
+            else
+                bindings = apply_assignment(bindings, stmt_names[idx], stmt_actual_types[idx], known_structs, known_enums)
+            end
+        end
+        if stmt_kinds[idx] == "use" then
+            let use_err = validate_identifier_use(bindings, stmt_lines[idx], stmt_names[idx])
+            if use_err != null then
+                errors.push(use_err)
+            end
+        end
+        if stmt_kinds[idx] == "return" then
+            let return_err = validate_return_type(stmt_lines[idx], fn_return_type, stmt_actual_types[idx], known_structs, known_enums)
+            if return_err != null then
+                errors.push(return_err)
+            end
+        end
+        idx = idx + 1
+    end
+
+    return [bindings, errors]
+end
+
+fn check_stmt_sequence(stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, fn_return_type: String, known_structs, known_enums) -> Dynamic
+    return check_stmt_sequence_from([], stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, fn_return_type, known_structs, known_enums)
+end
+
+fn check_if_stmt_sequences(base_bindings, then_kinds, then_lines, then_names, then_declared_types, then_actual_types, else_kinds, else_lines, else_names, else_declared_types, else_actual_types, fn_return_type: String, known_structs, known_enums) -> Dynamic
+    let then_result = check_stmt_sequence_from(base_bindings, then_kinds, then_lines, then_names, then_declared_types, then_actual_types, fn_return_type, known_structs, known_enums)
+    let else_result = check_stmt_sequence_from(base_bindings, else_kinds, else_lines, else_names, else_declared_types, else_actual_types, fn_return_type, known_structs, known_enums)
+    let merged_bindings = merge_binding_envs(then_result[0], else_result[0], known_structs, known_enums)
+    let errors: Dynamic = []
+    let idx = 0
+    while idx < then_result[1].length() do
+        errors.push(then_result[1][idx])
+        idx = idx + 1
+    end
+    let else_idx = 0
+    while else_idx < else_result[1].length() do
+        errors.push(else_result[1][else_idx])
+        else_idx = else_idx + 1
+    end
+    return [merged_bindings, errors]
+end
+
+fn check_pattern_scoped_stmt_sequence(pattern_bindings, stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, fn_return_type: String, known_structs, known_enums) -> Dynamic
+    return check_stmt_sequence_from(pattern_bindings, stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, fn_return_type, known_structs, known_enums)
+end
+
+fn check_pattern_scoped_function(param_names, param_types, pattern_bindings, stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, declared_return_type: String, pattern_line: Number, known_structs, known_enums) -> Dynamic
+    let errors: Dynamic = []
+    let param_bindings = bind_params(param_names, param_types)
+    let collision_errors = validate_pattern_binding_collisions(pattern_bindings, param_names, pattern_line)
+    let collision_idx = 0
+    while collision_idx < collision_errors.length() do
+        errors.push(collision_errors[collision_idx])
+        collision_idx = collision_idx + 1
+    end
+
+    let seeded_bindings: Dynamic = []
+    let base_idx = 0
+    while base_idx < param_bindings.length() do
+        seeded_bindings.push(param_bindings[base_idx])
+        base_idx = base_idx + 1
+    end
+    let pat_idx = 0
+    while pat_idx < pattern_bindings.length() do
+        seeded_bindings.push(pattern_bindings[pat_idx])
+        pat_idx = pat_idx + 1
+    end
+
+    let body_result = check_stmt_sequence_from(
+        seeded_bindings,
+        stmt_kinds,
+        stmt_lines,
+        stmt_names,
+        stmt_declared_types,
+        stmt_actual_types,
+        declared_return_type,
+        known_structs,
+        known_enums
+    )
+    let body_errors = body_result[1]
+    let body_idx = 0
+    while body_idx < body_errors.length() do
+        errors.push(body_errors[body_idx])
+        body_idx = body_idx + 1
+    end
+    return [body_result[0], errors]
+end
+
+fn bind_params(param_names, param_types) -> Dynamic
+    let bindings: Dynamic = []
+    let idx = 0
+    while idx < param_names.length() and idx < param_types.length() do
+        bindings.push(param_names[idx])
+        bindings.push(param_types[idx])
+        idx = idx + 1
+    end
+    return bindings
+end
+
+fn check_function_body(param_names, param_types, stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, declared_return_type: String, known_structs, known_enums) -> Dynamic
+    let errors = validate_duplicate_names("parameter", param_names, 0)
+    let param_bindings = bind_params(param_names, param_types)
+    let body_result = check_stmt_sequence_from(
+        param_bindings,
+        stmt_kinds,
+        stmt_lines,
+        stmt_names,
+        stmt_declared_types,
+        stmt_actual_types,
+        declared_return_type,
+        known_structs,
+        known_enums
+    )
+    let stmt_idx = 0
+    let let_names: Dynamic = []
+    while stmt_idx < stmt_kinds.length() and stmt_idx < stmt_names.length() do
+        if stmt_kinds[stmt_idx] == "let" then
+            let_names.push(stmt_names[stmt_idx])
+        end
+        stmt_idx = stmt_idx + 1
+    end
+    let local_errors = validate_duplicate_names("local", let_names, 0)
+    let local_idx = 0
+    while local_idx < local_errors.length() do
+        errors.push(local_errors[local_idx])
+        local_idx = local_idx + 1
+    end
+    let collision_errors = validate_param_local_collisions(param_names, let_names, 0)
+    let collision_idx = 0
+    while collision_idx < collision_errors.length() do
+        errors.push(collision_errors[collision_idx])
+        collision_idx = collision_idx + 1
+    end
+    let body_errors = body_result[1]
+    let body_idx = 0
+    while body_idx < body_errors.length() do
+        errors.push(body_errors[body_idx])
+        body_idx = body_idx + 1
+    end
+    return [body_result[0], errors]
+end
+
+fn check_function_body_with_if(param_names, param_types, then_kinds, then_lines, then_names, then_declared_types, then_actual_types, else_kinds, else_lines, else_names, else_declared_types, else_actual_types, declared_return_type: String, known_structs, known_enums) -> Dynamic
+    let errors = validate_duplicate_names("parameter", param_names, 0)
+    let param_bindings = bind_params(param_names, param_types)
+    let body_result = check_if_stmt_sequences(
+        param_bindings,
+        then_kinds,
+        then_lines,
+        then_names,
+        then_declared_types,
+        then_actual_types,
+        else_kinds,
+        else_lines,
+        else_names,
+        else_declared_types,
+        else_actual_types,
+        declared_return_type,
+        known_structs,
+        known_enums
+    )
+    let body_errors = body_result[1]
+    let body_idx = 0
+    while body_idx < body_errors.length() do
+        errors.push(body_errors[body_idx])
+        body_idx = body_idx + 1
+    end
+    return [body_result[0], errors]
+end
+
+fn summarize_bindings(bindings) -> String
+    let parts = ""
+    let idx = 0
+    while idx + 1 < bindings.length() do
+        if idx > 0 then
+            parts = parts + ","
+        end
+        parts = parts + bindings[idx] + ":" + bindings[idx + 1]
+        idx = idx + 2
+    end
+    return parts
+end
+
+fn summarize_errors(errors) -> String
+    let parts = ""
+    let idx = 0
+    while idx < errors.length() do
+        if idx > 0 then
+            parts = parts + " | "
+        end
+        parts = parts + errors[idx]
+        idx = idx + 1
+    end
+    return parts
+end
+
+fn check_synthetic_fn(name: String, param_names, param_types, stmt_kinds, stmt_lines, stmt_names, stmt_declared_types, stmt_actual_types, declared_return_type: String, known_structs, known_enums) -> Dynamic
+    let result = check_function_body(
+        param_names,
+        param_types,
+        stmt_kinds,
+        stmt_lines,
+        stmt_names,
+        stmt_declared_types,
+        stmt_actual_types,
+        declared_return_type,
+        known_structs,
+        known_enums
+    )
+    let bindings = result[0]
+    let errors = result[1]
+    return [name, summarize_bindings(bindings), errors.length(), summarize_errors(errors)]
+end
+
+fn check_synthetic_fn_with_if(name: String, param_names, param_types, then_kinds, then_lines, then_names, then_declared_types, then_actual_types, else_kinds, else_lines, else_names, else_declared_types, else_actual_types, declared_return_type: String, known_structs, known_enums) -> Dynamic
+    let result = check_function_body_with_if(
+        param_names,
+        param_types,
+        then_kinds,
+        then_lines,
+        then_names,
+        then_declared_types,
+        then_actual_types,
+        else_kinds,
+        else_lines,
+        else_names,
+        else_declared_types,
+        else_actual_types,
+        declared_return_type,
+        known_structs,
+        known_enums
+    )
+    let bindings = result[0]
+    let errors = result[1]
+    return [name, summarize_bindings(bindings), errors.length(), summarize_errors(errors)]
+end
+
+fn check_synthetic_decl_program(fn_summaries) -> Dynamic
+    let total_errors = 0
+    let parts = ""
+    let idx = 0
+    while idx < fn_summaries.length() do
+        let summary = fn_summaries[idx]
+        let name = summary[0]
+        let binding_summary = summary[1]
+        let error_count = summary[2]
+        let error_summary = summary[3]
+        total_errors = total_errors + error_count
+        if idx > 0 then
+            parts = parts + " || "
+        end
+        parts = parts + name + " [" + binding_summary + "] errors=" + to_string(error_count)
+        if error_summary != "" then
+            parts = parts + " " + error_summary
+        end
+        idx = idx + 1
+    end
+    return ["synthetic-program", total_errors, parts]
+end
+
+fn check_synthetic_module(module_name: String, fn_summaries) -> Dynamic
+    let program_summary = check_synthetic_decl_program(fn_summaries)
+    let total_errors = program_summary[1]
+    let details = program_summary[2]
+    return [module_name, total_errors, details]
+end
+
+fn bridged_binary_shape_supported(shape: String) -> Number
+    if starts_with(shape, "binary(") == 0 then
+        return 0
+    end
+    if shape.contains(" > ") or shape.contains(" < ") or shape.contains(" == ") or shape.contains(" != ") or shape.contains(" >= ") or shape.contains(" <= ") then
+        return 1
+    end
+    return 0
+end
+
+fn bridged_struct_name(shape: String) -> String
+    if starts_with(shape, "struct(") == 0 then
+        return ""
+    end
+    let start = 7
+    let idx = start
+    while idx < shape.length() and shape.at(idx) != ";" and shape.at(idx) != ")" do
+        idx = idx + 1
+    end
+    return shape.slice(start, idx)
+end
+
+fn bridged_struct_shape_supported(shape: String, declared_type: String, known_structs) -> Number
+    let struct_name = bridged_struct_name(shape)
+    if struct_name == "" then
+        return 0
+    end
+    if list_contains(known_structs, struct_name) == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    if declared_type != struct_name then
+        return 0
+    end
+    return 1
+end
+
+fn bridged_method_shape_supported(shape: String, declared_type: String) -> Number
+    if starts_with(shape, "method(") == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    if shape.contains(";String)") and declared_type == "String" then
+        return 1
+    end
+    if shape.contains(";Number)") and declared_type == "Number" then
+        return 1
+    end
+    if shape.contains(";Boolean)") and declared_type == "Boolean" then
+        return 1
+    end
+    return 0
+end
+
+fn bridged_call_shape_supported(shape: String, declared_type: String) -> Number
+    if starts_with(shape, "call(") == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    return 1
+end
+
+fn bridged_call_name(shape: String) -> String
+    if starts_with(shape, "call(") == 0 then
+        return ""
+    end
+    let start = 5
+    let idx = start
+    while idx < shape.length() and shape.at(idx) != ";" and shape.at(idx) != ")" do
+        idx = idx + 1
+    end
+    return shape.slice(start, idx)
+end
+
+fn bridged_call_arg_shapes(shape: String) -> Dynamic
+    if starts_with(shape, "call(") == 0 then
+        return []
+    end
+    let start = 5
+    let idx = start
+    while idx < shape.length() and shape.at(idx) != ";" and shape.at(idx) != ")" do
+        idx = idx + 1
+    end
+    if idx >= shape.length() or shape.at(idx) == ")" then
+        return []
+    end
+    return split_top_level_args(shape.slice(idx + 1, shape.length() - 1))
+end
+
+fn bridged_list_item_shapes(shape: String) -> Dynamic
+    if starts_with(shape, "list(") == 0 or ends_with(shape, ")") == 0 then
+        return []
+    end
+    let inner = shape.slice(5, shape.length() - 1)
+    if inner == "" then
+        return []
+    end
+    return split_top_level_args(inner)
+end
+
+fn bridged_index_target_shape(shape: String) -> String
+    if starts_with(shape, "index(") == 0 or ends_with(shape, ")") == 0 then
+        return ""
+    end
+    let inner = shape.slice(6, shape.length() - 1)
+    let idx = 0
+    let depth = 0
+    while idx < inner.length() do
+        let ch = inner.at(idx)
+        if ch == "[" and depth == 0 then
+            return inner.slice(0, idx)
+        end
+        if ch == "(" or ch == "{" then
+            depth = depth + 1
+        end
+        if ch == ")" or ch == "}" then
+            depth = depth - 1
+        end
+        idx = idx + 1
+    end
+    return ""
+end
+
+fn bridged_index_arg_shape(shape: String) -> String
+    if starts_with(shape, "index(") == 0 or ends_with(shape, ")") == 0 then
+        return ""
+    end
+    let inner = shape.slice(6, shape.length() - 1)
+    let idx = 0
+    let depth = 0
+    while idx < inner.length() do
+        let ch = inner.at(idx)
+        if ch == "[" and depth == 0 then
+            if ends_with(inner, "]") == 0 then
+                return ""
+            end
+            return inner.slice(idx + 1, inner.length() - 1)
+        end
+        if ch == "(" or ch == "{" then
+            depth = depth + 1
+        end
+        if ch == ")" or ch == "}" then
+            depth = depth - 1
+        end
+        idx = idx + 1
+    end
+    return ""
+end
+
+fn bridged_member_target_shape(shape: String) -> String
+    if starts_with(shape, "member(") == 0 or ends_with(shape, ")") == 0 then
+        return ""
+    end
+    let inner = shape.slice(7, shape.length() - 1)
+    let idx = inner.length() - 1
+    while idx >= 0 do
+        if inner.at(idx) == "." then
+            return inner.slice(0, idx)
+        end
+        idx = idx - 1
+    end
+    return ""
+end
+
+fn bridged_member_field_name(shape: String) -> String
+    if starts_with(shape, "member(") == 0 or ends_with(shape, ")") == 0 then
+        return ""
+    end
+    let inner = shape.slice(7, shape.length() - 1)
+    let idx = inner.length() - 1
+    while idx >= 0 do
+        if inner.at(idx) == "." then
+            return inner.slice(idx + 1, inner.length())
+        end
+        idx = idx - 1
+    end
+    return ""
+end
+
+fn bridge_fn_param_types_for(name: String, fn_names, fn_param_type_rows) -> Dynamic
+    let idx = 0
+    while idx < fn_names.length() and idx < fn_param_type_rows.length() do
+        if fn_names[idx] == name then
+            return split_comma_list(fn_param_type_rows[idx])
+        end
+        idx = idx + 1
+    end
+    return []
+end
+
+fn bridge_fn_return_type_for(name: String, fn_names, fn_ret_types) -> String
+    let idx = 0
+    while idx < fn_names.length() and idx < fn_ret_types.length() do
+        if fn_names[idx] == name then
+            return fn_ret_types[idx]
+        end
+        idx = idx + 1
+    end
+    return "Dynamic"
+end
+
+fn bridged_expr_type(shape: String, bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types) -> String
+    if shape == "Number" then
+        return "Number"
+    end
+    if shape == "String" then
+        return "String"
+    end
+    if starts_with(shape, "ident:") == 1 then
+        return env_lookup(bindings, shape.slice(6, shape.length()))
+    end
+    if starts_with(shape, "binary(") == 1 then
+        if shape.contains(" > ") or shape.contains(" < ") or shape.contains(" == ") or shape.contains(" != ") or shape.contains(" >= ") or shape.contains(" <= ") or shape.contains(" and ") or shape.contains(" or ") then
+            return "Boolean"
+        end
+        return "Dynamic"
+    end
+    if starts_with(shape, "struct(") == 1 then
+        return bridged_struct_name(shape)
+    end
+    if starts_with(shape, "method(") == 1 then
+        let sep_idx = shape.length() - 2
+        while sep_idx >= 0 and shape.at(sep_idx) != ";" do
+            sep_idx = sep_idx - 1
+        end
+        if sep_idx >= 0 then
+            return shape.slice(sep_idx + 1, shape.length() - 1)
+        end
+        return "Dynamic"
+    end
+    if starts_with(shape, "call(") == 1 then
+        return bridge_fn_return_type_for(bridged_call_name(shape), fn_names, fn_ret_types)
+    end
+    if starts_with(shape, "member(") == 1 then
+        let target_type = declared_type_from_name(
+            bridged_expr_type(
+                bridged_member_target_shape(shape),
+                bindings,
+                known_structs,
+                known_enums,
+                fn_names,
+                fn_param_type_rows,
+                fn_ret_types,
+                bridge_field_structs,
+                bridge_field_names,
+                bridge_field_types
+            ),
+            known_structs,
+            known_enums
+        )
+        if target_type.kind == "Struct" then
+            return type_name(
+                field_type_for(
+                    target_type.name,
+                    bridged_member_field_name(shape),
+                    known_structs,
+                    bridge_field_structs,
+                    bridge_field_names,
+                    bridge_field_types,
+                    known_structs,
+                    known_enums
+                )
+            )
+        end
+        return "Dynamic"
+    end
+    if starts_with(shape, "index(") == 1 then
+        let target_type = declared_type_from_name(
+            bridged_expr_type(bridged_index_target_shape(shape), bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types),
+            known_structs,
+            known_enums
+        )
+        if target_type.kind == "List" then
+            return type_name(target_type.inner)
+        end
+        if target_type.kind == "String" then
+            return "String"
+        end
+        return "Dynamic"
+    end
+    if starts_with(shape, "list(") == 1 then
+        let item_shapes = bridged_list_item_shapes(shape)
+        if item_shapes.length() == 0 then
+            return "List<Dynamic>"
+        end
+        let item_type = declared_type_from_name(
+            bridged_expr_type(item_shapes[0], bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types),
+            known_structs,
+            known_enums
+        )
+        let idx = 1
+        while idx < item_shapes.length() do
+            let next_type = declared_type_from_name(
+                bridged_expr_type(item_shapes[idx], bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types),
+                known_structs,
+                known_enums
+            )
+            item_type = unify_type(item_type, next_type)
+            idx = idx + 1
+        end
+        return type_name(TypeList(item_type))
+    end
+    if starts_with(shape, "enum(") == 1 then
+        let idx = 0
+        while idx < known_enums.length() do
+            if bridged_enum_shape_supported(shape, known_enums[idx], known_enums) == 1 then
+                return known_enums[idx]
+            end
+            idx = idx + 1
+        end
+        return "Dynamic"
+    end
+    return "Dynamic"
+end
+
+fn bridged_list_shape_supported(shape: String, declared_type: String, bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types) -> Number
+    if starts_with(shape, "list(") == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    let expected = declared_type_from_name(declared_type, known_structs, known_enums)
+    if expected.kind != "List" then
+        return 0
+    end
+    return 1
+end
+
+fn bridged_index_shape_supported(shape: String, declared_type: String, bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types) -> Number
+    if starts_with(shape, "index(") == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    let target_type = declared_type_from_name(
+        bridged_expr_type(bridged_index_target_shape(shape), bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types),
+        known_structs,
+        known_enums
+    )
+    let index_type = bridged_expr_type(bridged_index_arg_shape(shape), bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types)
+    if index_type != "Number" then
+        return 0
+    end
+    if target_type.kind == "List" or target_type.kind == "String" then
+        return 1
+    end
+    return 0
+end
+
+fn bridged_member_shape_supported(shape: String, declared_type: String, bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types) -> Number
+    if starts_with(shape, "member(") == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    let target_type = declared_type_from_name(
+        bridged_expr_type(
+            bridged_member_target_shape(shape),
+            bindings,
+            known_structs,
+            known_enums,
+            fn_names,
+            fn_param_type_rows,
+            fn_ret_types,
+            bridge_field_structs,
+            bridge_field_names,
+            bridge_field_types
+        ),
+        known_structs,
+        known_enums
+    )
+    if target_type.kind != "Struct" then
+        return 0
+    end
+    let field_type = field_type_for(
+        target_type.name,
+        bridged_member_field_name(shape),
+        known_structs,
+        bridge_field_structs,
+        bridge_field_names,
+        bridge_field_types,
+        known_structs,
+        known_enums
+    )
+    if field_type.kind == "Dynamic" then
+        return 0
+    end
+    return 1
+end
+
+fn bridged_call_arg_types(shape: String, bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types) -> Dynamic
+    let arg_shapes = bridged_call_arg_shapes(shape)
+    let arg_types: Dynamic = []
+    let idx = 0
+    while idx < arg_shapes.length() do
+        arg_types.push(bridged_expr_type(arg_shapes[idx], bindings, known_structs, known_enums, fn_names, fn_param_type_rows, fn_ret_types, bridge_field_structs, bridge_field_names, bridge_field_types))
+        idx = idx + 1
+    end
+    return arg_types
+end
+
+fn bridged_enum_name(shape: String) -> String
+    if starts_with(shape, "enum(") == 0 then
+        return ""
+    end
+    let start = 5
+    let idx = start
+    while idx < shape.length() and shape.at(idx) != ";" and shape.at(idx) != ")" do
+        idx = idx + 1
+    end
+    return shape.slice(start, idx)
+end
+
+fn bridged_enum_shape_supported(shape: String, declared_type: String, known_enums) -> Number
+    if starts_with(shape, "enum(") == 0 then
+        return 0
+    end
+    if declared_type == "" or declared_type == "Dynamic" then
+        return 0
+    end
+    if list_contains(known_enums, declared_type) == 0 then
+        return 0
+    end
+    let variant_name = bridged_enum_name(shape)
+    if variant_name == "" then
+        return 0
+    end
+    return 1
+end
+
+fn run_bridge_fn_from_args(args, base_idx: Number) -> Number
+    let fn_name = args[base_idx]
+    let param_names = split_bridge_list(args[base_idx + 1])
+    let param_types = split_bridge_list(args[base_idx + 2])
+    let stmt_kinds = split_bridge_list(args[base_idx + 3])
+    let stmt_lines = split_bridge_numbers(args[base_idx + 4])
+    let stmt_names = split_bridge_list(args[base_idx + 5])
+    let declared_types = split_bridge_list(args[base_idx + 6])
+    let actual_types = split_bridge_list(args[base_idx + 7])
+    let ret_type = decode_bridge_item(args[base_idx + 8])
+    let expr_shapes = []
+    if args.length() > base_idx + 9 then
+        expr_shapes = split_bridge_list(args[base_idx + 9])
+    end
+    let known_fn_names = []
+    let known_fn_param_type_rows = []
+    let known_fn_ret_types = []
+    let bridge_field_structs = []
+    let bridge_field_names = []
+    let bridge_field_types = []
+    if args.length() > base_idx + 12 then
+        known_fn_names = split_bridge_list(args[base_idx + 10])
+        known_fn_param_type_rows = split_bridge_list(args[base_idx + 11])
+        known_fn_ret_types = split_bridge_list(args[base_idx + 12])
+    end
+    if args.length() > base_idx + 15 then
+        bridge_field_structs = split_bridge_list(args[base_idx + 13])
+        bridge_field_names = split_bridge_list(args[base_idx + 14])
+        bridge_field_types = split_bridge_list(args[base_idx + 15])
+    end
+    debug_if("bridge-fn", fn_name)
+    debug_if("bridge-param-count", param_names.length())
+    debug_if("bridge-stmt-count", stmt_kinds.length())
+    assert_eq(param_names.length(), param_types.length(), "bridge param count mismatch for " + fn_name)
+    assert_eq(stmt_kinds.length(), stmt_lines.length(), "bridge stmt/line count mismatch for " + fn_name)
+    assert_eq(stmt_kinds.length(), stmt_names.length(), "bridge stmt/name count mismatch for " + fn_name)
+    assert_eq(stmt_kinds.length(), declared_types.length(), "bridge stmt/declared count mismatch for " + fn_name)
+    assert_eq(stmt_kinds.length(), actual_types.length(), "bridge stmt/actual count mismatch for " + fn_name)
+    if expr_shapes.length() > 0 then
+        debug_if("bridge-expr-count", expr_shapes.length())
+        assert_eq(stmt_kinds.length(), expr_shapes.length(), "bridge stmt/expr count mismatch for " + fn_name)
+    end
+    let known_structs = ["User", "Node"]
+    let known_enums = ["Result", "Key"]
+    let bridged_binary_checks = 0
+    let bridged_struct_checks = 0
+    let bridged_method_checks = 0
+    let bridged_call_checks = 0
+    let bridged_list_checks = 0
+    let bridged_index_checks = 0
+    let bridged_member_checks = 0
+    let bridged_enum_checks = 0
+    let bridge_bindings = bind_params(param_names, param_types)
+    let bridge_let_errors: Dynamic = []
+    let bridge_call_errors: Dynamic = []
+    let idx = 0
+    while idx < stmt_kinds.length() and idx < expr_shapes.length() do
+        if stmt_kinds[idx] == "if" then
+            debug_if("bridge-if-shape", expr_shapes[idx])
+            assert_eq(bridged_binary_shape_supported(expr_shapes[idx]), 1, "unsupported bridged if condition shape for " + fn_name)
+            bridged_binary_checks = bridged_binary_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "struct(") == 1 then
+            debug_if("bridge-struct-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_struct_shape_supported(expr_shapes[idx], declared_types[idx], known_structs),
+                1,
+                "unsupported bridged struct shape for " + fn_name
+            )
+            bridged_struct_checks = bridged_struct_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "method(") == 1 then
+            debug_if("bridge-method-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_method_shape_supported(expr_shapes[idx], declared_types[idx]),
+                1,
+                "unsupported bridged method shape for " + fn_name
+            )
+            bridged_method_checks = bridged_method_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "call(") == 1 then
+            debug_if("bridge-call-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_call_shape_supported(expr_shapes[idx], declared_types[idx]),
+                1,
+                "unsupported bridged call shape for " + fn_name
+            )
+            let call_name = bridged_call_name(expr_shapes[idx])
+            let declared_param_types = bridge_fn_param_types_for(call_name, known_fn_names, known_fn_param_type_rows)
+            let actual_arg_types = bridged_call_arg_types(
+                expr_shapes[idx],
+                bridge_bindings,
+                known_structs,
+                known_enums,
+                known_fn_names,
+                known_fn_param_type_rows,
+                known_fn_ret_types,
+                bridge_field_structs,
+                bridge_field_names,
+                bridge_field_types
+            )
+            let call_errors = validate_call_args(call_name, stmt_lines[idx], declared_param_types, actual_arg_types, known_structs, known_enums)
+            let err_idx = 0
+            while err_idx < call_errors.length() do
+                bridge_call_errors.push(call_errors[err_idx])
+                err_idx = err_idx + 1
+            end
+            bridged_call_checks = bridged_call_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "list(") == 1 then
+            debug_if("bridge-list-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_list_shape_supported(
+                    expr_shapes[idx],
+                    declared_types[idx],
+                bridge_bindings,
+                known_structs,
+                known_enums,
+                known_fn_names,
+                known_fn_param_type_rows,
+                known_fn_ret_types,
+                bridge_field_structs,
+                bridge_field_names,
+                bridge_field_types
+            ),
+                1,
+                "unsupported bridged list shape for " + fn_name
+            )
+            bridged_list_checks = bridged_list_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "member(") == 1 then
+            debug_if("bridge-member-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_member_shape_supported(
+                    expr_shapes[idx],
+                    declared_types[idx],
+                    bridge_bindings,
+                    known_structs,
+                    known_enums,
+                    known_fn_names,
+                    known_fn_param_type_rows,
+                    known_fn_ret_types,
+                    bridge_field_structs,
+                    bridge_field_names,
+                    bridge_field_types
+                ),
+                1,
+                "unsupported bridged member shape for " + fn_name
+            )
+            bridged_member_checks = bridged_member_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "index(") == 1 then
+            debug_if("bridge-index-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_index_shape_supported(
+                    expr_shapes[idx],
+                    declared_types[idx],
+                    bridge_bindings,
+                    known_structs,
+                    known_enums,
+                    known_fn_names,
+                    known_fn_param_type_rows,
+                    known_fn_ret_types,
+                    bridge_field_structs,
+                    bridge_field_names,
+                    bridge_field_types
+                ),
+                1,
+                "unsupported bridged index shape for " + fn_name
+            )
+            bridged_index_checks = bridged_index_checks + 1
+        end
+        if stmt_kinds[idx] == "return" and starts_with(expr_shapes[idx], "call(") == 1 then
+            let call_name = bridged_call_name(expr_shapes[idx])
+            let declared_param_types = bridge_fn_param_types_for(call_name, known_fn_names, known_fn_param_type_rows)
+            let actual_arg_types = bridged_call_arg_types(
+                expr_shapes[idx],
+                bridge_bindings,
+                known_structs,
+                known_enums,
+                known_fn_names,
+                known_fn_param_type_rows,
+                known_fn_ret_types,
+                bridge_field_structs,
+                bridge_field_names,
+                bridge_field_types
+            )
+            let call_errors = validate_call_args(call_name, stmt_lines[idx], declared_param_types, actual_arg_types, known_structs, known_enums)
+            let err_idx = 0
+            while err_idx < call_errors.length() do
+                bridge_call_errors.push(call_errors[err_idx])
+                err_idx = err_idx + 1
+            end
+            bridged_call_checks = bridged_call_checks + 1
+        end
+        if stmt_kinds[idx] == "let" and starts_with(expr_shapes[idx], "enum(") == 1 then
+            debug_if("bridge-enum-shape", expr_shapes[idx])
+            assert_eq(
+                bridged_enum_shape_supported(expr_shapes[idx], declared_types[idx], known_enums),
+                1,
+                "unsupported bridged enum shape for " + fn_name
+            )
+            bridged_enum_checks = bridged_enum_checks + 1
+        end
+        if stmt_kinds[idx] == "let" then
+            let bridge_actual_type = actual_types[idx]
+            if starts_with(expr_shapes[idx], "list(") == 1 or starts_with(expr_shapes[idx], "index(") == 1 or starts_with(expr_shapes[idx], "member(") == 1 then
+                bridge_actual_type = bridged_expr_type(
+                    expr_shapes[idx],
+                    bridge_bindings,
+                    known_structs,
+                    known_enums,
+                    known_fn_names,
+                    known_fn_param_type_rows,
+                    known_fn_ret_types,
+                    bridge_field_structs,
+                    bridge_field_names,
+                    bridge_field_types
+                )
+            end
+            let let_errors = validate_let_binding(bridge_bindings, stmt_lines[idx], stmt_names[idx], declared_types[idx], bridge_actual_type, known_structs, known_enums)
+            let let_err_idx = 0
+            while let_err_idx < let_errors.length() do
+                bridge_let_errors.push(let_errors[let_err_idx])
+                let_err_idx = let_err_idx + 1
+            end
+            if let_errors.length() == 0 then
+                let binding_ty = declared_types[idx]
+                if binding_ty != "" then
+                    bridge_bindings = env_bind(bridge_bindings, stmt_names[idx], binding_ty)
+                else
+                    bridge_bindings = env_bind(bridge_bindings, stmt_names[idx], bridge_actual_type)
+                end
+            end
+        end
+        idx = idx + 1
+    end
+    let result = check_function_body(
+        param_names,
+        param_types,
+        stmt_kinds,
+        stmt_lines,
+        stmt_names,
+        declared_types,
+        actual_types,
+        ret_type,
+        known_structs,
+        known_enums
+    )
+    let all_errors: Dynamic = []
+    let result_err_idx = 0
+    while result_err_idx < result[1].length() do
+        all_errors.push(result[1][result_err_idx])
+        result_err_idx = result_err_idx + 1
+    end
+    let bridge_let_err_idx = 0
+    while bridge_let_err_idx < bridge_let_errors.length() do
+        all_errors.push(bridge_let_errors[bridge_let_err_idx])
+        bridge_let_err_idx = bridge_let_err_idx + 1
+    end
+    let bridge_err_idx = 0
+    while bridge_err_idx < bridge_call_errors.length() do
+        all_errors.push(bridge_call_errors[bridge_err_idx])
+        bridge_err_idx = bridge_err_idx + 1
+    end
+    print("bridge-fn", fn_name, summarize_bindings(result[0]), all_errors.length(), summarize_errors(all_errors))
+    if expr_shapes.length() > 0 then
+        print("bridge-exprs", expr_shapes.length(), expr_shapes[0])
+        if expr_shapes.length() > 1 then
+            print("bridge-exprs-tail", expr_shapes[1], expr_shapes[expr_shapes.length() - 1])
+        end
+    end
+    print("bridge-binary", bridged_binary_checks)
+    print("bridge-struct", bridged_struct_checks)
+    print("bridge-method", bridged_method_checks)
+    print("bridge-call", bridged_call_checks)
+    print("bridge-list", bridged_list_checks)
+    print("bridge-index", bridged_index_checks)
+    print("bridge-member", bridged_member_checks)
+    print("bridge-enum", bridged_enum_checks)
+    return 0
+end
+
+fn demo()
+    let known_structs = ["User", "Node"]
+    let known_enums = ["Result", "Key"]
+    let struct_names = ["User", "User"]
+    let field_structs = ["User", "User"]
+    let field_names = ["name", "score"]
+    let field_types = ["String", "Number"]
+    let variant_enums = ["Result", "Result"]
+    let variant_names = ["Ok", "Err"]
+    let variant_indices = [0, 0]
+    let variant_types = ["User", "String"]
+
+    let user_ty = declared_type_from_name("User", known_structs, known_enums)
+    let key_ty = declared_type_from_name("Key", known_structs, known_enums)
+    let list_ty = declared_type_from_name("List<String>", known_structs, known_enums)
+    let list_dynamic = declared_type_from_name("List<Dynamic>", known_structs, known_enums)
+    let result_ty = declared_type_from_name("Result", known_structs, known_enums)
+    let dynamic_ty = declared_type_from_name("Dynamic", known_structs, known_enums)
+    let ok_error = validate_declared_type(12, "initializer for 'name'", "String", "String", known_structs, known_enums)
+    let bad_error = validate_declared_type(18, "initializer for 'count'", "Number", "String", known_structs, known_enums)
+    let explicit_dynamic_ok = validate_declared_type_with_explicit_dynamic(20, "initializer for 'box'", "Dynamic", "String", known_structs, known_enums)
+    let field_errors = validate_type_decl_fields(
+        "User",
+        24,
+        ["name", "score", "meta"],
+        ["String", "Number", "Dynamic"],
+        ["String", "String", "Result"],
+        known_structs,
+        known_enums
+    )
+    let fn_errors = validate_fn_signature(
+        "build_user",
+        31,
+        ["name", "role", "extra"],
+        ["String", "String", "Dynamic"],
+        ["String", "Number", "Result"],
+        "Dynamic",
+        "Result",
+        known_structs,
+        known_enums
+    )
+    let struct_bindings = bind_pattern_names(
+        "Struct",
+        "User",
+        ["Bind", "Bind"],
+        ["user_name", "user_score"],
+        ["name", "score"],
+        user_ty,
+        struct_names,
+        field_structs,
+        field_names,
+        field_types,
+        variant_enums,
+        variant_names,
+        variant_indices,
+        variant_types,
+        known_structs,
+        known_enums
+    )
+    let enum_bindings = bind_pattern_names(
+        "EnumVariant",
+        "Ok",
+        ["Bind"],
+        ["payload"],
+        [],
+        declared_type_from_name("Result", known_structs, known_enums),
+        struct_names,
+        field_structs,
+        field_names,
+        field_types,
+        variant_enums,
+        variant_names,
+        variant_indices,
+        variant_types,
+        known_structs,
+        known_enums
+    )
+    let exhaustive_match_errors = validate_enum_match_exhaustiveness(
+        42,
+        "Result",
+        ["EnumVariant", "EnumVariant"],
+        ["Ok", "Err"],
+        [0, 0],
+        variant_enums,
+        variant_names
+    )
+    let missing_match_errors = validate_enum_match_exhaustiveness(
+        48,
+        "Result",
+        ["EnumVariant"],
+        ["Ok"],
+        [0],
+        variant_enums,
+        variant_names
+    )
+    let unreachable_match_errors = validate_enum_match_exhaustiveness(
+        54,
+        "Result",
+        ["Wildcard", "EnumVariant"],
+        ["_", "Ok"],
+        [0, 0],
+        variant_enums,
+        variant_names
+    )
+    let let_errors = validate_let_binding([], 60, "count", "Number", "String", known_structs, known_enums)
+    let let_env = env_bind(
+        env_bind(
+            env_bind([], "count", type_name(type_for_let_binding("Number", "Number", known_structs, known_enums))),
+            "name",
+            type_name(type_for_let_binding("String", "String", known_structs, known_enums))
+        ),
+        "payload",
+        type_name(type_for_let_binding("", "Result", known_structs, known_enums))
+    )
+    let merged_env = merge_binding_envs(
+        env_bind(
+            env_bind([], "score", "Number"),
+            "status",
+            "String"
+        ),
+        env_bind(
+            env_bind([], "score", "Dynamic"),
+            "extra",
+            "Result"
+        ),
+        known_structs,
+        known_enums
+    )
+    let assign_error = validate_assignment(let_env, 66, "count", "String", known_structs, known_enums)
+    let assign_ok = validate_assignment(let_env, 67, "payload", "Result", known_structs, known_enums)
+    let branch_then = apply_assignment(
+        env_bind([], "value", "Number"),
+        "value",
+        "Dynamic",
+        known_structs,
+        known_enums
+    )
+    let branch_else = apply_assignment(
+        env_bind([], "value", "Number"),
+        "value",
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let branch_merge = merge_binding_envs(branch_then, branch_else, known_structs, known_enums)
+    let flow_result = check_stmt_sequence(
+        ["let", "assign", "use", "use", "return"],
+        [72, 73, 74, 75, 76],
+        ["total", "total", "total", "missing", ""],
+        ["Number", "", "", "", ""],
+        ["Number", "String", "", "", "Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let flow_bindings = flow_result[0]
+    let flow_errors = flow_result[1]
+    let branch_flow = check_if_stmt_sequences(
+        env_bind([], "status", "String"),
+        ["assign", "use"],
+        [80, 81],
+        ["status", "status"],
+        ["", ""],
+        ["String", ""],
+        ["assign", "use"],
+        [82, 83],
+        ["status", "status"],
+        ["", ""],
+        ["Dynamic", ""],
+        "Dynamic",
+        known_structs,
+        known_enums
+    )
+    let branch_flow_bindings = branch_flow[0]
+    let branch_flow_errors = branch_flow[1]
+    let pattern_flow = check_pattern_scoped_stmt_sequence(
+        struct_bindings,
+        ["use", "assign", "use"],
+        [88, 89, 90],
+        ["user_name", "user_score", "missing_pattern_name"],
+        ["", "", ""],
+        ["", "Number", ""],
+        "Dynamic",
+        known_structs,
+        known_enums
+    )
+    let return_flow = check_stmt_sequence(
+        ["return", "return"],
+        [94, 95],
+        ["", ""],
+        ["", ""],
+        ["String", "Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let pattern_flow_bindings = pattern_flow[0]
+    let pattern_flow_errors = pattern_flow[1]
+    let return_flow_errors = return_flow[1]
+    let function_body = check_function_body(
+        ["name", "count"],
+        ["String", "Number"],
+        ["use", "let", "assign", "return"],
+        [100, 101, 102, 103],
+        ["name", "label", "count", ""],
+        ["", "String", "", ""],
+        ["", "String", "String", "Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let function_body_bindings = function_body[0]
+    let function_body_errors = function_body[1]
+    let function_if_body = check_function_body_with_if(
+        ["count"],
+        ["Number"],
+        ["return"],
+        [108],
+        [""],
+        [""],
+        ["Number"],
+        ["return"],
+        [109],
+        [""],
+        [""],
+        ["String"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let function_if_body_bindings = function_if_body[0]
+    let function_if_body_errors = function_if_body[1]
+    let call_flow = check_call_flow(
+        [],
+        "built",
+        "build_user",
+        ["String", "Number"],
+        ["String", "Number"],
+        "String",
+        111,
+        "built",
+        "String",
+        "String",
+        known_structs,
+        known_enums
+    )
+    let call_flow_bindings = call_flow[0]
+    let call_flow_errors = call_flow[1]
+    let synthetic_fn = check_synthetic_fn(
+        "accumulate",
+        ["seed"],
+        ["Number"],
+        ["let", "use", "return"],
+        [114, 115, 116],
+        ["total", "seed", ""],
+        ["Number", "", ""],
+        ["Number", "", "Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let synthetic_fn_if = check_synthetic_fn_with_if(
+        "choose_count",
+        ["count"],
+        ["Number"],
+        ["return"],
+        [120],
+        [""],
+        [""],
+        ["Number"],
+        ["return"],
+        [121],
+        [""],
+        [""],
+        ["Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let synthetic_fn_errors_demo = check_synthetic_fn(
+        "broken_total",
+        ["seed"],
+        ["Number"],
+        ["assign", "use", "return"],
+        [124, 125, 126],
+        ["seed", "missing_total", ""],
+        ["", "", ""],
+        ["String", "", "String"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let synthetic_program = check_synthetic_decl_program([
+        synthetic_fn,
+        synthetic_fn_if,
+        synthetic_fn_errors_demo
+    ])
+    let synthetic_module = check_synthetic_module(
+        "core_math",
+        [
+            synthetic_fn,
+            synthetic_fn_if,
+            synthetic_fn_errors_demo
+        ]
+    )
+    let duplicate_fn = check_synthetic_fn(
+        "dup_names",
+        ["x", "x"],
+        ["Number", "Number"],
+        ["let", "let", "return"],
+        [130, 131, 132],
+        ["tmp", "tmp", ""],
+        ["Number", "Number", ""],
+        ["Number", "Number", "Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let collision_fn = check_synthetic_fn(
+        "shadow_param",
+        ["count"],
+        ["Number"],
+        ["let", "return"],
+        [136, 137],
+        ["count", ""],
+        ["Number", ""],
+        ["Number", "Number"],
+        "Number",
+        known_structs,
+        known_enums
+    )
+    let duplicate_pattern_fn = check_pattern_scoped_function(
+        ["seed"],
+        ["Number"],
+        ["value", "Number", "value", "String"],
+        ["use", "return"],
+        [142, 143],
+        ["value", ""],
+        ["", ""],
+        ["", "Number"],
+        "Number",
+        141,
+        known_structs,
+        known_enums
+    )
+    let collision_pattern_fn = check_pattern_scoped_function(
+        ["seed"],
+        ["Number"],
+        ["seed", "Number"],
+        ["use", "return"],
+        [146, 147],
+        ["seed", ""],
+        ["", ""],
+        ["", "Number"],
+        "Number",
+        145,
+        known_structs,
+        known_enums
+    )
+    let call_ok = validate_call_args(
+        "build_user",
+        150,
+        ["String", "Number"],
+        ["String", "Number"],
+        known_structs,
+        known_enums
+    )
+    let call_bad = validate_call_args(
+        "build_user",
+        151,
+        ["String", "Number"],
+        ["Number", "String"],
+        known_structs,
+        known_enums
+    )
+    let call_arity = validate_call_args(
+        "build_user",
+        152,
+        ["String", "Number"],
+        ["String"],
+        known_structs,
+        known_enums
+    )
+    let method_ok = validate_method_call(
+        "user",
+        "User",
+        "rename",
+        "User",
+        ["String"],
+        ["String"],
+        154,
+        known_structs,
+        known_enums
+    )
+    let method_bad_receiver = validate_method_call(
+        "user",
+        "Result",
+        "rename",
+        "User",
+        ["String"],
+        ["String"],
+        155,
+        known_structs,
+        known_enums
+    )
+    let method_bad_arg = validate_method_call(
+        "user",
+        "User",
+        "rename",
+        "User",
+        ["String"],
+        ["Number"],
+        156,
+        known_structs,
+        known_enums
+    )
+    let method_flow = check_method_call_flow(
+        [],
+        "renamed",
+        "user",
+        "User",
+        "User",
+        "rename",
+        ["String"],
+        ["String"],
+        "String",
+        157,
+        "renamed",
+        "String",
+        "String",
+        known_structs,
+        known_enums
+    )
+    let method_flow_bindings = method_flow[0]
+    let method_flow_errors = method_flow[1]
+    let struct_lit_ok = validate_struct_literal(
+        "User",
+        160,
+        ["name", "score"],
+        ["String", "Number"],
+        ["String", "Number"],
+        known_structs,
+        known_enums
+    )
+    let struct_lit_bad = validate_struct_literal(
+        "User",
+        161,
+        ["name", "score"],
+        ["String", "Number"],
+        ["Number", "String"],
+        known_structs,
+        known_enums
+    )
+    let struct_lit_arity = validate_struct_literal(
+        "User",
+        162,
+        ["name"],
+        ["String", "Number"],
+        ["String"],
+        known_structs,
+        known_enums
+    )
+    let enum_ctor_ok = validate_enum_constructor(
+        "Result",
+        "Ok",
+        164,
+        ["User"],
+        ["User"],
+        known_structs,
+        known_enums
+    )
+    let enum_ctor_bad = validate_enum_constructor(
+        "Result",
+        "Ok",
+        165,
+        ["User"],
+        ["String"],
+        known_structs,
+        known_enums
+    )
+    let enum_ctor_arity = validate_enum_constructor(
+        "Result",
+        "Pair",
+        166,
+        ["String", "Number"],
+        ["String"],
+        known_structs,
+        known_enums
+    )
+    let bin_ok = validate_binary_op("+", "Number", "Number", 168, known_structs, known_enums)
+    let bin_bad = validate_binary_op("+", "String", "Number", 169, known_structs, known_enums)
+    let eq_ok = validate_binary_op("==", "User", "Dynamic", 170, known_structs, known_enums)
+    let eq_bad = validate_binary_op("==", "User", "String", 171, known_structs, known_enums)
+    let cmp_ok = validate_binary_op("<", "Number", "Number", 172, known_structs, known_enums)
+    let cmp_bad = validate_binary_op(">", "String", "Number", 173, known_structs, known_enums)
+    let cond_ok = validate_condition_type(174, "Boolean", known_structs, known_enums)
+    let cond_bad = validate_condition_type(175, "Number", known_structs, known_enums)
+
+    print("declared", type_name(user_ty), type_name(key_ty), type_name(list_ty))
+    print("compat", types_compatible(list_ty, list_dynamic), types_compatible(list_ty, result_ty))
+    print("unify", type_name(unify_type(dynamic_ty, list_ty)), type_name(unify_type(list_ty, result_ty)))
+    if ok_error == null then
+        print("declared-check ok")
+    end
+    if bad_error != null then
+        print(mismatch_message(bad_error))
+    end
+    if explicit_dynamic_ok == null then
+        print("explicit-dynamic ok")
+    end
+    print("field-errors", field_errors.length())
+    print(field_errors[0])
+    print("fn-errors", fn_errors.length())
+    print(fn_errors[0])
+    if fn_errors.length() > 1 then
+        print(fn_errors[1])
+    end
+    print("struct-bind", struct_bindings[0], struct_bindings[1], struct_bindings[2], struct_bindings[3])
+    print("enum-bind", enum_bindings[0], enum_bindings[1])
+    print("match-exhaustive", exhaustive_match_errors.length())
+    print("match-missing", missing_match_errors.length(), missing_match_errors[0])
+    print("match-unreachable", unreachable_match_errors.length(), unreachable_match_errors[0])
+    print("let-errors", let_errors.length(), let_errors[0])
+    print("env-lookup", env_lookup(let_env, "count"), env_lookup(let_env, "name"), env_lookup(let_env, "payload"))
+    print("env-merge", env_lookup(merged_env, "score"), env_lookup(merged_env, "status"), env_lookup(merged_env, "extra"))
+    print("assign-error", assign_error)
+    if assign_ok == null then
+        print("assign-ok")
+    end
+    print("branch-merge", env_lookup(branch_merge, "value"))
+    print("flow-binding", env_lookup(flow_bindings, "total"))
+    print("flow-errors", flow_errors.length(), flow_errors[0], flow_errors[1])
+    print("if-merge", env_lookup(branch_flow_bindings, "status"))
+    print("if-errors", branch_flow_errors.length())
+    print("pattern-flow-bind", env_lookup(pattern_flow_bindings, "user_name"), env_lookup(pattern_flow_bindings, "user_score"))
+    print("pattern-flow-errors", pattern_flow_errors.length(), pattern_flow_errors[0])
+    print("return-errors", return_flow_errors.length(), return_flow_errors[0])
+    print("fn-body-bind", env_lookup(function_body_bindings, "name"), env_lookup(function_body_bindings, "count"), env_lookup(function_body_bindings, "label"))
+    print("fn-body-errors", function_body_errors.length(), function_body_errors[0])
+    print("fn-if-bind", env_lookup(function_if_body_bindings, "count"))
+    print("fn-if-errors", function_if_body_errors.length(), function_if_body_errors[0])
+    print("call-flow", env_lookup(call_flow_bindings, "built"), call_flow_errors.length())
+    print("synthetic-fn", synthetic_fn[0], synthetic_fn[1], synthetic_fn[2], synthetic_fn[3])
+    print("synthetic-fn-if", synthetic_fn_if[0], synthetic_fn_if[1], synthetic_fn_if[2], synthetic_fn_if[3])
+    print("synthetic-fn-errors", synthetic_fn_errors_demo[0], synthetic_fn_errors_demo[1], synthetic_fn_errors_demo[2], synthetic_fn_errors_demo[3])
+    print("synthetic-program", synthetic_program[0], synthetic_program[1], synthetic_program[2])
+    print("synthetic-module", synthetic_module[0], synthetic_module[1], synthetic_module[2])
+    print("duplicate-fn", duplicate_fn[0], duplicate_fn[1], duplicate_fn[2], duplicate_fn[3])
+    print("collision-fn", collision_fn[0], collision_fn[1], collision_fn[2], collision_fn[3])
+    print("duplicate-pattern-fn", env_lookup(duplicate_pattern_fn[0], "value"), duplicate_pattern_fn[1].length(), duplicate_pattern_fn[1][0])
+    print("collision-pattern-fn", env_lookup(collision_pattern_fn[0], "seed"), collision_pattern_fn[1].length(), collision_pattern_fn[1][0])
+    print("call-ok", call_ok.length())
+    print("call-bad", call_bad.length(), call_bad[0], call_bad[1])
+    print("call-arity", call_arity.length(), call_arity[0])
+    print("method-ok", method_ok.length())
+    print("method-bad-receiver", method_bad_receiver.length(), method_bad_receiver[0])
+    print("method-bad-arg", method_bad_arg.length(), method_bad_arg[0])
+    print("method-flow", env_lookup(method_flow_bindings, "renamed"), method_flow_errors.length())
+    print("struct-lit-ok", struct_lit_ok.length())
+    print("struct-lit-bad", struct_lit_bad.length(), struct_lit_bad[0], struct_lit_bad[1])
+    print("struct-lit-arity", struct_lit_arity.length(), struct_lit_arity[0])
+    print("enum-ctor-ok", enum_ctor_ok.length())
+    print("enum-ctor-bad", enum_ctor_bad.length(), enum_ctor_bad[0])
+    print("enum-ctor-arity", enum_ctor_arity.length(), enum_ctor_arity[0])
+    if bin_ok == null then
+        print("bin-ok")
+    end
+    print("bin-bad", bin_bad)
+    if eq_ok == null then
+        print("eq-ok")
+    end
+    print("eq-bad", eq_bad)
+    if cmp_ok == null then
+        print("cmp-ok")
+    end
+    print("cmp-bad", cmp_bad)
+    if cond_ok == null then
+        print("cond-ok")
+    end
+    print("cond-bad", cond_bad)
+    return 0
+end
+
+fn typecheck_main() -> Number
+    let args = get_args()
+    if args.length() > 9 and args[0] == "bridge_fn" then
+        return run_bridge_fn_from_args(args, 1)
+    end
+    if args.length() > 10 and args[1] == "bridge_fn" then
+        return run_bridge_fn_from_args(args, 2)
+    end
+    return demo()
+end
+
+typecheck_main()

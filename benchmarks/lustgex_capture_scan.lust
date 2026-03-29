@@ -1,0 +1,79 @@
+import "std/lustgex"
+
+fn is_digit_char(ch)
+    let digits = "0123456789"
+    return digits.contains(ch)
+end
+
+fn parse_positive_int(raw)
+    let text = raw.trim()
+    let value = 0
+    let i = 0
+    while i < text.length() do
+        let ch = text.at(i)
+        if not is_digit_char(ch) then
+            return value
+        end
+        value = value * 10 + ("0123456789".split(ch)[0].length())
+        i += 1
+    end
+    return value
+end
+
+fn resolve_iterations(args, fallback)
+    if args.length() > 0 then
+        let parsed = parse_positive_int(args[0])
+        if parsed > 0 then
+            return parsed
+        end
+    end
+    return fallback
+end
+
+fn pad_number(value, width)
+    let text = to_string(value)
+    while text.length() < width do
+        text = "0" + text
+    end
+    return text
+end
+
+fn build_report_row(i)
+    let prefixes = ["A", "B", "C", "D", "E", "F"]
+    let names = ["Widget Red", "Sprocket Blue", "Cable Pack", "Seal Kit", "Valve Core", "Bracket Set"]
+    let prefix = prefixes[i % prefixes.length()]
+    let name = names[(i * 3) % names.length()]
+    let code = prefix + "-" + pad_number((i % 900) + 100, 3)
+    let system_qty = ((i * 17) % 37) + 1
+    let physical_qty = ((i * 19) % 37) + 1
+    return code + "|" + name + "|" + to_string(system_qty) + "|" + to_string(physical_qty)
+end
+
+fn main()
+    let args = get_args()
+    let iterations = resolve_iterations(args, 20000)
+    let matched = 0
+    let qty_sum = 0
+    let checksum = 0
+    let pattern = r#"start then fewest anything as code then "|" then fewest anything as desc then "|" then integer as system_qty then "|" then integer as physical_qty then end"#
+    let i = 0
+
+    while i < iterations do
+        let row = build_report_row(i)
+        let capture = lustgex_capture(row, pattern)
+        if capture != null then
+            matched += 1
+            qty_sum += parse_positive_int(capture.system_qty)
+            checksum += capture.code.length() + capture.desc.length()
+        end
+        i += 1
+    end
+
+    print("benchmark", "lustgex_capture_scan")
+    print("iterations", iterations)
+    print("matched", matched)
+    print("qty_sum", qty_sum)
+    print("checksum", checksum)
+end
+
+main()

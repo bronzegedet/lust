@@ -1,0 +1,13 @@
+let sum = 0
+let inclusive = 0
+
+for i in 0..5 do
+    sum += i
+end
+
+for i in 1..=5 do
+    inclusive += i
+end
+
+print("sum", sum)
+print("inclusive", inclusive)

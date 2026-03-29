@@ -1,0 +1,41 @@
+let scores = dict("ada", 3, "grace", 5)
+
+scores["ada"] += 2
+scores["alan"] = 7
+scores.set("linus", 9)
+
+print("ada", scores["ada"])
+print("alan", scores["alan"])
+print("missing", scores["missing"] == null)
+print("type", type_of(scores))
+print("len", scores.length())
+print("has", scores.has("grace"), scores.has("nobody"))
+print("keys", scores.keys().length())
+print("values", scores.values().length())
+for entry in scores.entries() do
+    let [key, value] = entry
+    print("entry", key, value)
+end
+
+let inline = { "x": 1, "y": 2 }
+print("inline", inline["x"], inline.length())
+
+let doubled = map_values(scores, fn(v) => v * 2)
+let filtered = filter_values(doubled, fn(v) => v > 10)
+print("mapped", doubled["ada"], doubled["linus"])
+print("filtered", filtered.has("ada"), filtered.has("linus"))
+
+let renamed = map_entries(scores, fn(entry) => [entry[0] + "_x", entry[1] + 1])
+print("entrymap", renamed["ada_x"], renamed["linus_x"])
+
+let method_style = scores
+    .map_values(fn(v) => v * 2)
+    .filter_values(fn(v) => v > 8)
+    .map_entries(fn(entry) => [entry[0] + "_done", entry[1]])
+print("method", method_style.has("grace_done"), method_style["linus_done"])
+
+let pair_text = ""
+for [key, value] in scores.entries() do
+    pair_text = pair_text + key + ":" + to_string(value) + ";"
+end
+print("pairs", pair_text)

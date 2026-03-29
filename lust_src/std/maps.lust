@@ -1,0 +1,21 @@
+-- std/maps.lust
+-- Dynamic key-value store using Lust structs.
+
+type MapInternal = {}
+type Map = { _inner }
+
+fn create_map()
+    return Map { _inner: MapInternal {} }
+end
+
+fn Map.set(key, value)
+    self._inner.set_field(key, value)
+end
+
+fn Map.get(key)
+    return self._inner.get_field(key)
+end
+
+fn Map.has(key)
+    return self._inner.get_field(key) != null
+end

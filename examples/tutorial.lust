@@ -1,0 +1,89 @@
+-- Lust Tutorial Example
+-- This script demonstrates the main features of the Lust language.
+
+fn add(a, b)
+    return a + b
+end
+
+type Point = { x, y }
+
+fn Point.shift(dx, dy)
+    self.x = self.x + dx
+    self.y = self.y + dy
+end
+
+fn Point.show()
+    print("Point at (${self.x}, ${self.y})")
+end
+
+enum Shape = Circle(radius) | Rect(w, h) | PointVariant
+
+fn describe_shape(s)
+    match s do
+        case Circle(r) then
+            print("A circle")
+        case Rect(w, h) then
+            print("A rectangle")
+        case PointVariant then
+            print("A single point")
+    end
+end
+
+fn main()
+    print("--- Basic Types and Variables ---")
+    let name = "Lust"
+    let version = 0.1
+    let is_awesome = true
+    
+    print("Language: ${name}, Version: ${version}")
+    print("Is it awesome? ${is_awesome}")
+
+    print("\n--- Control Flow ---")
+    let x = 10
+    if x > 5 then
+        print("${x} is greater than 5")
+    else if x == 5 then
+        print("${x} is equal to 5")
+    else
+        print("${x} is less than 5")
+    end
+
+    let i = 0
+    while i < 3 do
+        print("While loop iteration: ${i}")
+        i = i + 1
+    end
+
+    for item in ["apple", "banana", "cherry"] do
+        print("For loop item: ${item}")
+    end
+
+    print("\n--- Functions ---")
+    print("add(5, 3) = ${add(5, 3)}")
+
+    print("\n--- Lists and Pipelines ---")
+    let nums = [1, 2, 3, 4, 5]
+    print("Original list: ${nums}")
+
+    -- Pipe operator and list transformations
+    -- (Lambdas only work directly in filter/map for now)
+    let result = nums
+        |> filter(fn(n) => n % 2 == 1)
+        |> map(fn(n) => n * 10)
+    
+    print("Filtered (odd) and mapped (*10): ${result}")
+
+    print("\n--- Structs and Methods ---")
+    let p = Point { x: 10, y: 20 }
+    p.show()
+    p.shift(5, -5)
+    print("After shifting:")
+    p.show()
+
+    print("\n--- Enums and Match ---")
+    describe_shape(Circle(5))
+    describe_shape(Rect(10, 20))
+    describe_shape(PointVariant)
+end
+
+main()

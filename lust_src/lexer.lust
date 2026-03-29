@@ -1,0 +1,228 @@
+type Tok = { kind, text, line }
+
+fn Token(kind, text, line)
+    return Tok { kind: kind, text: text, line: line }
+end
+
+fn is_alpha(ch)
+    return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_".contains(ch)
+end
+
+fn is_digit(ch)
+    return "0123456789".contains(ch)
+end
+
+fn is_alnum(ch)
+    return is_alpha(ch) or is_digit(ch)
+end
+
+fn is_space(ch)
+    return ch == " " or ch == "\t" or ch == "\r" or ch == "\n"
+end
+
+fn keyword_kind(text)
+    if text == "fn" then return "Fn" end
+    if text == "print" then return "Print" end
+    if text == "let" then return "Let" end
+    if text == "return" then return "Return" end
+    if text == "if" then return "If" end
+    if text == "match" then return "Match" end
+    if text == "case" then return "Case" end
+    if text == "then" then return "Then" end
+    if text == "else" then return "Else" end
+    if text == "while" then return "While" end
+    if text == "do" then return "Do" end
+    if text == "type" then return "Type" end
+    if text == "enum" then return "Enum" end
+    if text == "struct" then return "Struct" end
+    if text == "import" then return "Import" end
+    if text == "end" then return "End" end
+    if text == "spawn" then return "Spawn" end
+    if text == "self" then return "Self" end
+    if text == "and" then return "And" end
+    if text == "or" then return "Or" end
+    if text == "not" then return "Not" end
+    return "Ident"
+end
+
+fn lex(source)
+    let tokens = []
+    let i = 0
+    let line = 1
+    let len = source.length()
+
+    while i < len do
+        let line_at_token = line
+        let ch = source.at(i)
+        let string_text = ""
+        let string_i = i
+        let string_line = line
+
+        if is_space(ch) then
+            if ch == "\n" then
+                line = line + 1
+            end
+            i = i + 1
+        else if ch == "/" and i + 1 < len and source.at(i + 1) == "/" then
+            i = i + 2
+            while i < len and source.at(i) != "\n" do
+                i = i + 1
+            end
+        else if ch == "-" and i + 1 < len and source.at(i + 1) == "-" then
+            i = i + 2
+            while i < len and source.at(i) != "\n" do
+                i = i + 1
+            end
+        else if ch == "(" then
+            tokens.push(Token("LParen", "(", line_at_token))
+            i = i + 1
+        else if ch == ")" then
+            tokens.push(Token("RParen", ")", line_at_token))
+            i = i + 1
+        else if ch == "{" then
+            tokens.push(Token("LBrace", "{", line_at_token))
+            i = i + 1
+        else if ch == "}" then
+            tokens.push(Token("RBrace", "}", line_at_token))
+            i = i + 1
+        else if ch == "[" then
+            tokens.push(Token("LBracket", "[", line_at_token))
+            i = i + 1
+        else if ch == "]" then
+            tokens.push(Token("RBracket", "]", line_at_token))
+            i = i + 1
+        else if ch == ":" then
+            tokens.push(Token("Colon", ":", line_at_token))
+            i = i + 1
+        else if ch == "." then
+            tokens.push(Token("Dot", ".", line_at_token))
+            i = i + 1
+        else if ch == "," then
+            tokens.push(Token("Comma", ",", line_at_token))
+            i = i + 1
+        else if ch == "|" then
+            tokens.push(Token("Pipe", "|", line_at_token))
+            i = i + 1
+        else if ch == "+" then
+            tokens.push(Token("Plus", "+", line_at_token))
+            i = i + 1
+        else if ch == "*" then
+            tokens.push(Token("Star", "*", line_at_token))
+            i = i + 1
+        else if ch == "%" then
+            tokens.push(Token("Percent", "%", line_at_token))
+            i = i + 1
+        else if ch == "/" then
+            tokens.push(Token("Slash", "/", line_at_token))
+            i = i + 1
+        else if ch == "-" then
+            tokens.push(Token("Minus", "-", line_at_token))
+            i = i + 1
+        else if ch == "=" then
+            if i + 1 < len and source.at(i + 1) == "=" then
+                tokens.push(Token("Eq", "==", line_at_token))
+                i = i + 2
+            else
+                tokens.push(Token("Equals", "=", line_at_token))
+                i = i + 1
+            end
+        else if ch == "!" then
+            if i + 1 < len and source.at(i + 1) == "=" then
+                tokens.push(Token("Ne", "!=", line_at_token))
+                i = i + 2
+            else
+                i = i + 1
+            end
+        else if ch == ">" then
+            if i + 1 < len and source.at(i + 1) == "=" then
+                tokens.push(Token("Ge", ">=", line_at_token))
+                i = i + 2
+            else
+                tokens.push(Token("Gt", ">", line_at_token))
+                i = i + 1
+            end
+        else if ch == "<" then
+            if i + 1 < len and source.at(i + 1) == "=" then
+                tokens.push(Token("Le", "<=", line_at_token))
+                i = i + 2
+            else
+                tokens.push(Token("Lt", "<", line_at_token))
+                i = i + 1
+            end
+        else if ch == "\"" then
+            string_i = i + 1
+            while string_i < len and source.at(string_i) != "\"" do
+                let current = source.at(string_i)
+                if current == "\\" and string_i + 1 < len then
+                    let escaped = source.at(string_i + 1)
+                    if escaped == "n" then string_text = string_text + "\n"
+                    else if escaped == "t" then string_text = string_text + "\t"
+                    else if escaped == "\"" then string_text = string_text + "\""
+                    else if escaped == "\\" then string_text = string_text + "\\"
+                    else string_text = string_text + escaped end
+                    string_i = string_i + 2
+                else
+                    if current == "\n" then
+                        string_line = string_line + 1
+                    end
+                    string_text = string_text + current
+                    string_i = string_i + 1
+                end
+            end
+            if string_i < len and source.at(string_i) == "\"" then
+                string_i = string_i + 1
+            end
+            i = string_i
+            line = string_line
+            tokens.push(Token("StringLit", string_text, line_at_token))
+        else if is_digit(ch) then
+            let start = i
+            i = i + 1
+            while i < len and (is_digit(source.at(i)) or source.at(i) == ".") do
+                i = i + 1
+            end
+            tokens.push(Token("Number", source.slice(start, i), line_at_token))
+        else if is_alpha(ch) then
+            let start = i
+            i = i + 1
+            while i < len and is_alnum(source.at(i)) do
+                i = i + 1
+            end
+            let text = source.slice(start, i)
+            tokens.push(Token(keyword_kind(text), text, line_at_token))
+        else
+            i = i + 1
+        end
+    end
+
+    return tokens
+end
+
+fn print_tokens(tokens)
+    let i = 0
+    while i < tokens.length() do
+        let tok = tokens[i]
+        print(to_string(tok.line) + " " + tok.kind + " " + tok.text)
+        i = i + 1
+    end
+end
+
+fn resolve_cli_path(path)
+    if path.contains("/") then
+        return path
+    end
+    return "../" + path
+end
+
+fn run_lexer(path)
+    let source = read_file(resolve_cli_path(path))
+    let tokens = lex(source)
+    print_tokens(tokens)
+end
+
+let cli_args = get_args()
+if cli_args.length() == 0 then
+    print("usage: lust_src/lexer.lust <file>")
+else
+    run_lexer(cli_args[0])
+end

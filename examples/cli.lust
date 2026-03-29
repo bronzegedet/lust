@@ -1,0 +1,137 @@
+import "std/path"
+
+-- Lust Interactive CLI
+-- Small terminal launcher for Lust scripts.
+
+fn show_help()
+    print("")
+    print("Lust CLI")
+    print("  help          Show this help message")
+    print("  list          List .lust files in the current folder and examples/")
+    print("  run <file>    Run a Lust script with lust run")
+    print("  view <file>   View the source of a script")
+    print("  quit          Exit the CLI")
+end
+
+fn print_lust_files_in(dir)
+    let entries = list_dir(dir)
+    let shown = 0
+    for file in entries do
+        if file.ends_with(".lust") then
+            print(" ", join(dir, file))
+            shown += 1
+        end
+    end
+    if shown == 0 then
+        print(" ", "(no .lust files found)")
+    end
+end
+
+fn show_examples()
+    print("")
+    print("Script folder:")
+    print_lust_files_in(".")
+    print("")
+    print("Parent folder:")
+    print_lust_files_in("..")
+end
+
+fn resolve_script_path(file)
+    match read_file_result(file) do
+        case FileOk(_) then
+            return file
+        case FileErr(_) then
+            pass
+    end
+
+    let example_path = join("examples", file)
+    match read_file_result(example_path) do
+        case FileOk(_) then
+            return example_path
+        case FileErr(_) then
+            pass
+    end
+
+    let parent_path = join("..", file)
+    match read_file_result(parent_path) do
+        case FileOk(_) then
+            return parent_path
+        case FileErr(_) then
+            pass
+    end
+
+    return null
+end
+
+fn view_script(file)
+    let path = resolve_script_path(file)
+    if path == null then
+        print("error", "could not find script")
+        print(file)
+        return
+    end
+
+    match read_file_result(path) do
+        case FileOk(content) then
+            print("")
+            print("--- source", path, "---")
+            print(content)
+            print("------------------------")
+        case FileErr(message) then
+            print("error", "could not read script")
+            print(path)
+            print(message)
+    end
+end
+
+fn run_script(file)
+    let path = resolve_script_path(file)
+    if path == null then
+        print("error", "could not find script")
+        print(file)
+        return
+    end
+
+    print("running", path)
+    let code = launch_lust("run", path)
+    print("exit_code", code)
+end
+
+fn main()
+    print("Welcome to the Lust CLI example.")
+    print("Type 'help' for commands.")
+
+    let running = true
+    while running do
+        let cmd_line = prompt("lust> ").trim()
+        let parts = cmd_line.split(" ")
+        let cmd = parts[0].trim()
+
+        if cmd == "" then
+            pass
+        else if cmd == "help" then
+            show_help()
+        else if cmd == "list" then
+            show_examples()
+        else if cmd == "quit" or cmd == "exit" then
+            print("Goodbye.")
+            running = false
+        else if cmd == "run" then
+            if parts.length() < 2 or parts[1].trim() == "" then
+                print("usage", "run <file>")
+            else
+                run_script(parts[1].trim())
+            end
+        else if cmd == "view" then
+            if parts.length() < 2 or parts[1].trim() == "" then
+                print("usage", "view <file>")
+            else
+                view_script(parts[1].trim())
+            end
+        else
+            print("unknown_command", cmd)
+        end
+    end
+end
+
+main()

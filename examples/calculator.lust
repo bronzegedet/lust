@@ -1,0 +1,53 @@
+-- Lust Simple Calculator
+-- Demonstrates user input, string splitting, matching, and arithmetic.
+
+fn calculate(a, op, b)
+    match op do
+        case "+" then return a + b
+        case "-" then return a - b
+        case "*" then return a * b
+        case "/" then
+            if b == 0 then
+                print("Error: Division by zero!")
+                return 0
+            end
+            return a / b
+        case "%" then return a % b
+        case _ then
+            print("Unknown operator: ${op}")
+            return 0
+    end
+end
+
+fn main()
+    print("--- Lust Calculator ---")
+    print("Usage: Enter expressions like '10 + 5' or '2 * 3'")
+    print("Type 'exit' to quit.")
+
+    let running = true
+    while running do
+        print("\ncalc> ")
+        let line = input()
+        
+        if line == "exit" or line == "quit" or line == "q" then
+            print("Goodbye!")
+            running = false
+        else if line == "" then
+            -- Skip
+        else
+            let parts = line.split(" ")
+            if parts.length() < 3 then
+                print("Invalid input. Expected: <num> <op> <num>")
+            else
+                let a = to_number(parts[0])
+                let op = parts[1]
+                let b = to_number(parts[2])
+                
+                let result = calculate(a, op, b)
+                print("Result: ${result}")
+            end
+        end
+    end
+end
+
+main()

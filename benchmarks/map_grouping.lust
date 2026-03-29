@@ -1,0 +1,87 @@
+fn is_digit_char(ch)
+    let digits = "0123456789"
+    return digits.contains(ch)
+end
+
+fn parse_positive_int(raw)
+    let text = raw.trim()
+    let value = 0
+    let i = 0
+    while i < text.length() do
+        let ch = text.at(i)
+        if not is_digit_char(ch) then
+            return value
+        end
+        value = value * 10 + ("0123456789".split(ch)[0].length())
+        i += 1
+    end
+    return value
+end
+
+fn resolve_iterations(args, fallback)
+    if args.length() > 0 then
+        let parsed = parse_positive_int(args[0])
+        if parsed > 0 then
+            return parsed
+        end
+    end
+    return fallback
+end
+
+fn build_department(i)
+    let depts = ["ENGINEERING", "POLICE", "FIRE", "CITY CLERK", "PUBLIC SERVICES"]
+    return depts[i % depts.length()]
+end
+
+fn build_supervisor(i)
+    let supers = ["Ada Stone", "Rhea Marsh", "Noah Vale", "Iris Cole", "Mina Hart", "Owen Pike"]
+    return supers[(i * 2) % supers.length()]
+end
+
+fn pair_key(dept, supervisor)
+    return dept + "::" + supervisor
+end
+
+fn main()
+    let args = get_args()
+    let iterations = resolve_iterations(args, 20000)
+    let dept_counts = {}
+    let pair_counts = {}
+    let i = 0
+
+    while i < iterations do
+        let dept = build_department(i)
+        let supervisor = build_supervisor(i)
+        let key = pair_key(dept, supervisor)
+        if not dept_counts.has(dept) then
+            dept_counts[dept] = 0
+        end
+        if not pair_counts.has(key) then
+            pair_counts[key] = 0
+        end
+        dept_counts[dept] += 1
+        pair_counts[key] += 1
+        i += 1
+    end
+
+    let dept_count = 0
+    let pair_count = 0
+    let total_rows = 0
+
+    for dept, count in dept_counts do
+        dept_count += 1
+        total_rows += count
+    end
+
+    for key, count in pair_counts do
+        pair_count += 1
+    end
+
+    print("benchmark", "map_grouping")
+    print("iterations", iterations)
+    print("departments", dept_count)
+    print("dept_supervisor_pairs", pair_count)
+    print("total_rows", total_rows)
+end
+
+main()
