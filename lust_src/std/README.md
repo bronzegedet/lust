@@ -24,3 +24,7 @@ Initial modules:
 - [`lustgex.lust`](lustgex.lust)
 - [`path.lust`](path.lust)
 - [`strings.lust`](strings.lust)
+- [`ui/themes.lust`](ui/themes.lust)
+- [`ui/classic.lust`](ui/classic.lust)
+- [`ui/editor_primitives.lust`](ui/editor_primitives.lust)
+- [`ui/editor.lust`](ui/editor.lust)

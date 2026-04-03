@@ -1,0 +1,115 @@
+fn pad_number(value, width)
+    let text = to_string(value)
+    while text.length() < width do
+        text = "0" + text
+    end
+    return text
+end
+
+fn bool_text(flag)
+    if flag then
+        return "true"
+    end
+    return "false"
+end
+
+fn day_text(day)
+    if day < 10 then
+        return "0" + to_string(day)
+    end
+    return to_string(day)
+end
+
+fn resolve_output_path(args)
+    if args.length() > 0 then
+        return args[0]
+    end
+    return "generated_users.csv"
+end
+
+fn resolve_row_count(args)
+    if args.length() > 1 then
+        let parsed = parse_positive_int(args[1])
+        if parsed > 0 then
+            return parsed
+        end
+    end
+    return 10000
+end
+
+fn is_digit_char(ch)
+    let digits = "0123456789"
+    return digits.contains(ch)
+end
+
+fn parse_positive_int(raw)
+    let text = raw.trim()
+    let value = 0
+    let i = 0
+    while i < text.length() do
+        let ch = text.at(i)
+        if not is_digit_char(ch) then
+            return value
+        end
+        value = value * 10 + ("0123456789".split(ch)[0].length())
+        i = i + 1
+    end
+    return value
+end
+
+fn build_row(id, segments, plans, cities)
+    let segment = segments[(id - 1) % segments.length()]
+    let plan = plans[(id * 3) % plans.length()]
+    let city = cities[(id * 5) % cities.length()]
+    let score = ((id * 17) + 11) % 1000
+    let active = bool_text((id % 3) != 0)
+    let month = ((id - 1) % 12) + 1
+    let day = ((id - 1) % 28) + 1
+    return to_string(id)
+        + ",user_"
+        + pad_number(id, 6)
+        + ","
+        + segment
+        + ","
+        + plan
+        + ","
+        + city
+        + ","
+        + to_string(score)
+        + ","
+        + active
+        + ",2026-"
+        + day_text(month)
+        + "-"
+        + day_text(day)
+end
+
+fn stream_csv(file, row_count)
+    let segments = ["alpha", "beta", "gamma", "delta", "omega"]
+    let plans = ["free", "pro", "team", "enterprise"]
+    let cities = ["atlanta", "boston", "chicago", "denver", "phoenix", "seattle", "toronto", "austin"]
+    let bytes_written = "id,user_key,segment,plan,city,score,active,signup_day".length() + 1
+    file.write_line("id,user_key,segment,plan,city,score,active,signup_day")
+    let id = 1
+    while id <= row_count do
+        let row = build_row(id, segments, plans, cities)
+        file.write_line(row)
+        bytes_written = bytes_written + row.length() + 1
+        id = id + 1
+    end
+    return bytes_written
+end
+
+fn main()
+    let args = get_args()
+    let output_path = resolve_output_path(args)
+    let row_count = resolve_row_count(args)
+    let file = open_file(output_path, "write")
+    let bytes_written = stream_csv(file, row_count)
+    file.close()
+    println("generated " + to_string(row_count) + " rows")
+    println("output " + output_path)
+    println("bytes " + to_string(bytes_written))
+end
+
+main()

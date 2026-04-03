@@ -1,0 +1,16 @@
+fn main()
+    let raw_line = "  alpha|| beta | gamma |  "
+
+    let clean = raw_line
+        |> trim()
+        |> split("|")
+        |> filter(fn(x) => x.length() > 0)
+        |> map(fn(x) => x.trim())
+
+    print("count=${clean.length()}")
+    print("first=${clean[0]}")
+    print("second=${clean[1]}")
+    print("third=${clean[2]}")
+end
+
+main()

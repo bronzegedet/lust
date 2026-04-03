@@ -1,0 +1,22 @@
+import "draw"
+
+fn main()
+    window(160, 120, "Lust Draw Demo")
+
+    let frames = 0
+    while live() do
+        clear_screen(dark_gray)
+
+        rect(8, 8, 36, 18, blue)
+        line(0, 119, 159, 0, green)
+        triangle(110, 18, 150, 36, 96, 54, red)
+        circle(80, 72, 18, neon_pink)
+        text("lust draw", 12, 96, 8, white)
+
+        frames = frames + 1
+    end
+
+    print("frames", frames)
+end
+
+main()

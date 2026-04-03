@@ -1,0 +1,6 @@
+import "cross_mod"
+fn main()
+    print("CROSS_G is ${CROSS_G}")
+    print("get_cross() is ${get_cross()}")
+end
+main()

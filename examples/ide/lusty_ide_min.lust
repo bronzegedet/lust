@@ -1,0 +1,25 @@
+import "std/ui/editor"
+import "std/ide/model"
+import "std/ide/commands"
+import "std/ide/view"
+
+fn main()
+    render_header("Lusty IDE Min")
+
+    let state = apply_host_span(apply_host_select_range(apply_host_goto(load("main"))))
+    render_document(state)
+
+    let input = gather()
+    let selected = apply_selection_controls(state, input.select_left, input.select_right, input.clear_selection)
+    let hit = consume_hit_event(selected, 12)
+    let pointed = apply_hit_event(selected, hit.pending, hit.line, hit.col, hit.extend)
+
+    let typed = take_text_input()
+    let command = resolve_runtime_command(input.command)
+    let edited = apply_input(pointed, typed, command, input.extend_selection, 12)
+    let next_state = with_scroll_visible(edited, 12.0)
+    persist(next_state)
+    render_updated(next_state)
+end
+
+main()

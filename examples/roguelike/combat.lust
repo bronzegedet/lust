@@ -1,0 +1,18 @@
+type MessageLog = { messages }
+
+fn MessageLog.add(msg)
+    self.messages.push(msg)
+    if self.messages.length() > 5 then
+        self.messages = self.messages[1..]
+    end
+end
+
+fn attack(attacker, defender, log)
+    let dmg = attacker.power - defender.defense
+    if dmg > 0 then
+        log.add(attacker.name + " hits " + defender.name + " for " + to_string(dmg) + ".")
+        defender.hp = defender.hp - dmg
+    else
+        log.add(attacker.name + " misses " + defender.name + ".")
+    end
+end

@@ -1,0 +1,49 @@
+-- Simple CSV Data Processor in Lust
+-- Demonstrates file I/O, string manipulation, and pipelines.
+
+type Employee = { name, department, salary }
+
+fn main()
+    let raw_data = "Name,Dept,Salary\nAlice,Engineering,100000\nBob,Design,90000\nCharlie,Engineering,110000\nDiana,HR,80000"
+    
+    print("--- Processing Employee Data ---")
+    
+    let rows = raw_data.lines()
+    let header = rows[0]
+    let data_rows = rows[1..]
+
+    let employees = data_rows
+        |> map(fn(line) => line.split(","))
+        |> map(fn(parts) => Employee { 
+            name: parts[0], 
+            department: parts[1], 
+            salary: to_number(parts[2]) 
+        })
+
+    print("Total employees: ${employees.length()}")
+
+    print("\n--- Engineering Department ---")
+    let eng_dept = employees
+        |> filter(fn(e) => e.department == "Engineering")
+    
+    for e in eng_dept do
+        print("${e.name} works in ${e.department} with salary ${e.salary}")
+    end
+
+    -- Calculate average salary for Engineering
+    let total_salary = 0
+    for e in eng_dept do
+        total_salary = total_salary + e.salary
+    end
+    let avg = total_salary / eng_dept.length()
+    print("\nAverage Engineering Salary: ${avg}")
+
+    print("\n--- Exporting High Earners (Salary > 95000) ---")
+    let high_earners = employees
+        |> filter(fn(e) => e.salary > 95000)
+        |> map(fn(e) => "${e.name} (${e.department})")
+    
+    print("High Earners: ${high_earners}")
+end
+
+main()

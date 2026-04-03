@@ -1,0 +1,70 @@
+import "std/strings"
+
+fn resolve_input_path(args)
+    if args.length() > 0 then
+        return args[0]
+    end
+    return "reconcile_sample.txt"
+end
+
+fn main()
+    let args = get_args()
+    let input_path = resolve_input_path(args)
+    let content = read_file(input_path)
+    let lines = content.lines()
+
+    let order_id = ""
+    let company_name = ""
+    let collecting = false
+    let items_found = 0
+    let total_system_qty = 0
+    let total_physical_qty = 0
+    let mismatches = 0
+    let i = 0
+
+    while i < lines.length() do
+        let line = lines[i].trim()
+
+        if line.contains("BR/ORD#") then
+            let parts = line.split("|")
+            if parts.length() >= 3 then
+                order_id = parts[1].trim()
+                company_name = parts[2].trim()
+            end
+        end
+
+        if line.contains("DESCRIPTION") and line.contains("SYSTEM_QTY") then
+            collecting = true
+        end
+
+        if line.contains("*********") and collecting then
+            collecting = false
+        end
+
+        if collecting and line.contains("|") and not line.contains("DESCRIPTION") then
+            let parts = line.split("|")
+            if parts.length() >= 4 then
+                let code = parts[0].trim()
+                let description = parts[1].trim()
+                let system_qty = parse_positive_int(parts[2])
+                let physical_qty = parse_positive_int(parts[3])
+
+                items_found = items_found + 1
+                total_system_qty = total_system_qty + system_qty
+                total_physical_qty = total_physical_qty + physical_qty
+                if system_qty != physical_qty then
+                    mismatches = mismatches + 1
+                end
+
+                print("item=${code} desc=${description} system=${system_qty} physical=${physical_qty}")
+            end
+        end
+
+        i = i + 1
+    end
+
+    print("order=${order_id} company=${company_name}")
+    print("items=${items_found} system_total=${total_system_qty} physical_total=${total_physical_qty} mismatches=${mismatches}")
+end
+
+main()

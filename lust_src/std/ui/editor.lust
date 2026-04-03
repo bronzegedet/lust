@@ -1,0 +1,436 @@
+-- std/ui/editor.lust
+-- Lust-authored editor state helpers built on VM ui_* primitives.
+
+import "std/ui/editor_primitives"
+
+type EditState = { text: String, cursor: Number, sel_start: Number, sel_end: Number }
+
+fn caret(doc_id, default_value)
+    return ui_caret(doc_id, default_value)
+end
+
+fn selection_start(doc_id, default_value)
+    return ui_selection_start(doc_id, default_value)
+end
+
+fn selection_end(doc_id, default_value)
+    return ui_selection_end(doc_id, default_value)
+end
+
+fn scroll_y(doc_id, default_value)
+    return ui_scroll_y(doc_id, default_value)
+end
+
+fn take_text_input()
+    return ui_text_input()
+end
+
+fn take_command(channel, default_value)
+    return ui_command(channel, default_value)
+end
+
+fn key_left()
+    return ui_key_left()
+end
+
+fn key_right()
+    return ui_key_right()
+end
+
+fn key_up()
+    return ui_key_up()
+end
+
+fn key_down()
+    return ui_key_down()
+end
+
+fn key_enter()
+    return ui_key_enter()
+end
+
+fn key_esc()
+    return ui_key_esc()
+end
+
+fn key_backspace()
+    return ui_key_backspace()
+end
+
+fn key_delete()
+    return ui_key_delete()
+end
+
+fn mouse_x()
+    return ui_mouse_x()
+end
+
+fn mouse_y()
+    return ui_mouse_y()
+end
+
+fn mouse_down()
+    return ui_mouse_down()
+end
+
+fn mouse_clicked()
+    return ui_mouse_clicked()
+end
+
+fn mouse_click_x()
+    return ui_mouse_click_x()
+end
+
+fn mouse_click_y()
+    return ui_mouse_click_y()
+end
+
+fn clamp_cursor(text, cursor)
+    let size = text.to_list().length()
+    if cursor < 0 then
+        return 0
+    end
+    if cursor > size then
+        return size
+    end
+    return cursor
+end
+
+fn apply_text_input(text, cursor, chunk)
+    if chunk == "" then
+        return [text, clamp_cursor(text, cursor)]
+    end
+    let next_text = text_insert(text, cursor, chunk)
+    let next_cursor = clamp_cursor(next_text, cursor + chunk.to_list().length())
+    return [next_text, next_cursor]
+end
+
+fn apply_backspace(text, cursor)
+    let pos = clamp_cursor(text, cursor)
+    if pos <= 0 then
+        return [text, 0]
+    end
+    let next = text_delete(text, pos - 1, pos)
+    return [next, pos - 1]
+end
+
+fn apply_delete(text, cursor)
+    let pos = clamp_cursor(text, cursor)
+    let end_pos = pos + 1
+    let next = text_delete(text, pos, end_pos)
+    return [next, pos]
+end
+
+fn selection_min(sel_start, sel_end)
+    if sel_start <= sel_end then
+        return sel_start
+    end
+    return sel_end
+end
+
+fn selection_max(sel_start, sel_end)
+    if sel_start >= sel_end then
+        return sel_start
+    end
+    return sel_end
+end
+
+fn normalize_selection(sel_start, sel_end)
+    return [selection_min(sel_start, sel_end), selection_max(sel_start, sel_end)]
+end
+
+fn has_selection(sel_start, sel_end)
+    return selection_min(sel_start, sel_end) != selection_max(sel_start, sel_end)
+end
+
+fn replace_selection(text, sel_start, sel_end, chunk)
+    let start = selection_min(sel_start, sel_end)
+    let stop = selection_max(sel_start, sel_end)
+    let stripped = text_delete(text, start, stop)
+    return text_insert(stripped, start, chunk)
+end
+
+fn next_command(channel, fallback)
+    let command = take_command(channel, fallback)
+    if command != "" then
+        return command
+    end
+    if key_backspace() then
+        return "backspace"
+    end
+    if key_delete() then
+        return "delete"
+    end
+    if key_enter() then
+        return "newline"
+    end
+    if key_left() then
+        return "left"
+    end
+    if key_right() then
+        return "right"
+    end
+    if key_up() then
+        return "up"
+    end
+    if key_down() then
+        return "down"
+    end
+    return ""
+end
+
+fn split_lines(text)
+    return text.split("\n")
+end
+
+fn line_count(text)
+    return split_lines(text).length()
+end
+
+fn line_length(text, line_idx)
+    let lines = split_lines(text)
+    if line_idx < 0 then
+        return 0
+    end
+    if line_idx >= lines.length() then
+        return 0
+    end
+    return lines[line_idx].to_list().length()
+end
+
+fn index_to_line_col(text, index)
+    let idx = clamp_cursor(text, index)
+    let line = 0
+    let col = 0
+    let i = 0
+    while i < idx do
+        let ch = text.at(i)
+        if ch == "\n" then
+            line = line + 1
+            col = 0
+        else
+            col = col + 1
+        end
+        i = i + 1
+    end
+    return [line, col]
+end
+
+fn line_col_to_index(text, target_line, target_col)
+    let line_goal = target_line
+    let col_goal = target_col
+    if line_goal < 0 then
+        line_goal = 0
+    end
+    if col_goal < 0 then
+        col_goal = 0
+    end
+
+    let size = text.to_list().length()
+    let line = 0
+    let col = 0
+    let i = 0
+    while i < size do
+        if line == line_goal and col == col_goal then
+            return i
+        end
+        let ch = text.at(i)
+        if ch == "\n" then
+            if line == line_goal then
+                return i
+            end
+            line = line + 1
+            col = 0
+        else
+            col = col + 1
+        end
+        i = i + 1
+    end
+    return size
+end
+
+fn move_cursor_vertical(text, cursor, delta_lines)
+    let pos = clamp_cursor(text, cursor)
+    let lc = index_to_line_col(text, pos)
+    let line = lc[0]
+    let col = lc[1]
+
+    let goal_line = line + delta_lines
+    let max_line = line_count(text) - 1
+    if goal_line < 0 then
+        goal_line = 0
+    end
+    if goal_line > max_line then
+        goal_line = max_line
+    end
+    return line_col_to_index(text, goal_line, col)
+end
+
+fn move_cursor_line_start(text, cursor)
+    let lc = index_to_line_col(text, clamp_cursor(text, cursor))
+    return line_col_to_index(text, lc[0], 0)
+end
+
+fn move_cursor_line_end(text, cursor)
+    let lc = index_to_line_col(text, clamp_cursor(text, cursor))
+    let width = line_length(text, lc[0])
+    return line_col_to_index(text, lc[0], width)
+end
+
+fn ensure_scroll_visible(cursor_line, scroll, viewport_lines)
+    let view = viewport_lines
+    if view <= 0 then
+        return 0
+    end
+    if cursor_line < scroll then
+        return cursor_line
+    end
+    if cursor_line >= scroll + view then
+        return cursor_line - view + 1
+    end
+    return scroll
+end
+
+fn collapse_selection(cursor)
+    return [cursor, cursor]
+end
+
+fn apply_insert(text, cursor, sel_start, sel_end, chunk)
+    let pos = clamp_cursor(text, cursor)
+    let start = clamp_cursor(text, selection_min(sel_start, sel_end))
+    let stop = clamp_cursor(text, selection_max(sel_start, sel_end))
+    let next_text = text
+    let next_cursor = pos
+    if has_selection(start, stop) then
+        next_text = replace_selection(text, start, stop, chunk)
+        next_cursor = clamp_cursor(next_text, start + chunk.to_list().length())
+    else
+        next_text = text_insert(text, pos, chunk)
+        next_cursor = clamp_cursor(next_text, pos + chunk.to_list().length())
+    end
+    return EditState { text: next_text, cursor: next_cursor, sel_start: next_cursor, sel_end: next_cursor }
+end
+
+fn apply_erase(text, cursor, sel_start, sel_end, command)
+    let pos = clamp_cursor(text, cursor)
+    let start = clamp_cursor(text, selection_min(sel_start, sel_end))
+    let stop = clamp_cursor(text, selection_max(sel_start, sel_end))
+    if has_selection(start, stop) then
+        let next_text = text_delete(text, start, stop)
+        return EditState { text: next_text, cursor: start, sel_start: start, sel_end: start }
+    end
+    if command == "backspace" then
+        if pos <= 0 then
+            return EditState { text: text, cursor: 0, sel_start: 0, sel_end: 0 }
+        end
+        let next_cursor = pos - 1
+        let next_text = text_delete(text, next_cursor, pos)
+        return EditState { text: next_text, cursor: next_cursor, sel_start: next_cursor, sel_end: next_cursor }
+    end
+    let next_text = text_delete(text, pos, pos + 1)
+    return EditState { text: next_text, cursor: pos, sel_start: pos, sel_end: pos }
+end
+
+fn apply_navigation(text, cursor, sel_start, sel_end, command)
+    let pos = clamp_cursor(text, cursor)
+    let start = clamp_cursor(text, selection_min(sel_start, sel_end))
+    let stop = clamp_cursor(text, selection_max(sel_start, sel_end))
+    let next_cursor = pos
+    if command == "left" then
+        if has_selection(start, stop) then
+            next_cursor = start
+        else
+            next_cursor = clamp_cursor(text, pos - 1)
+        end
+        return EditState { text: text, cursor: next_cursor, sel_start: next_cursor, sel_end: next_cursor }
+    end
+    if command == "right" then
+        if has_selection(start, stop) then
+            next_cursor = stop
+        else
+            next_cursor = clamp_cursor(text, pos + 1)
+        end
+        return EditState { text: text, cursor: next_cursor, sel_start: next_cursor, sel_end: next_cursor }
+    end
+    if command == "up" then
+        next_cursor = move_cursor_vertical(text, pos, -1)
+        return EditState { text: text, cursor: next_cursor, sel_start: next_cursor, sel_end: next_cursor }
+    end
+    if command == "down" then
+        next_cursor = move_cursor_vertical(text, pos, 1)
+        return EditState { text: text, cursor: next_cursor, sel_start: next_cursor, sel_end: next_cursor }
+    end
+    return EditState { text: text, cursor: pos, sel_start: start, sel_end: stop }
+end
+
+fn apply_navigation_with_mode(text, cursor, sel_start, sel_end, command, extend_selection, page_lines)
+    let nav = apply_navigation(text, cursor, sel_start, sel_end, command)
+    let pos = clamp_cursor(text, cursor)
+    let start = clamp_cursor(text, selection_min(sel_start, sel_end))
+    let stop = clamp_cursor(text, selection_max(sel_start, sel_end))
+    let next_cursor = nav.cursor
+
+    if command == "home" then
+        let home_cursor = move_cursor_line_start(text, pos)
+        if extend_selection then
+            return EditState { text: text, cursor: home_cursor, sel_start: start, sel_end: home_cursor }
+        end
+        return EditState { text: text, cursor: home_cursor, sel_start: home_cursor, sel_end: home_cursor }
+    end
+    if command == "end" then
+        let end_cursor = move_cursor_line_end(text, pos)
+        if extend_selection then
+            return EditState { text: text, cursor: end_cursor, sel_start: start, sel_end: end_cursor }
+        end
+        return EditState { text: text, cursor: end_cursor, sel_start: end_cursor, sel_end: end_cursor }
+    end
+    if command == "page_up" then
+        let up_cursor = move_cursor_vertical(text, pos, 0 - page_lines)
+        if extend_selection then
+            return EditState { text: text, cursor: up_cursor, sel_start: start, sel_end: up_cursor }
+        end
+        return EditState { text: text, cursor: up_cursor, sel_start: up_cursor, sel_end: up_cursor }
+    end
+    if command == "page_down" then
+        let down_cursor = move_cursor_vertical(text, pos, page_lines)
+        if extend_selection then
+            return EditState { text: text, cursor: down_cursor, sel_start: start, sel_end: down_cursor }
+        end
+        return EditState { text: text, cursor: down_cursor, sel_start: down_cursor, sel_end: down_cursor }
+    end
+
+    if command == "left" or command == "right" or command == "up" or command == "down" then
+        if extend_selection then
+            return EditState { text: text, cursor: next_cursor, sel_start: start, sel_end: next_cursor }
+        end
+        return nav
+    end
+
+    return EditState { text: text, cursor: pos, sel_start: start, sel_end: stop }
+end
+
+fn apply_edit_step_with_mode(text, cursor, sel_start, sel_end, typed, command, extend_selection, page_lines)
+    let state = EditState {
+        text: text,
+        cursor: clamp_cursor(text, cursor),
+        sel_start: sel_start,
+        sel_end: sel_end
+    }
+    if typed != "" then
+        state = apply_insert(state.text, state.cursor, state.sel_start, state.sel_end, typed)
+    end
+    if command == "backspace" or command == "delete" then
+        state = apply_erase(state.text, state.cursor, state.sel_start, state.sel_end, command)
+    end
+    if command == "newline" then
+        state = apply_insert(state.text, state.cursor, state.sel_start, state.sel_end, "\n")
+    end
+    if command == "left" or command == "right" or command == "up" or command == "down" or command == "home" or command == "end" or command == "page_up" or command == "page_down" then
+        state = apply_navigation_with_mode(state.text, state.cursor, state.sel_start, state.sel_end, command, extend_selection, page_lines)
+    end
+    return state
+end
+
+fn apply_edit_step(text, cursor, sel_start, sel_end, typed, command)
+    return apply_edit_step_with_mode(text, cursor, sel_start, sel_end, typed, command, false, 12)
+end

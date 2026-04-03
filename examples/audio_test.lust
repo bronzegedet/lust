@@ -1,0 +1,21 @@
+import "audio"
+
+print("initializing audio")
+audio_init()
+audio_set_gain(0.15)
+
+print("playing 440hz")
+audio_set_freq(440)
+audio_note_on()
+sleep(0.5)
+
+print("playing 660hz")
+audio_set_freq(660)
+sleep(0.5)
+
+print("playing 880hz")
+audio_set_freq(880)
+sleep(0.5)
+
+audio_note_off()
+print("done")

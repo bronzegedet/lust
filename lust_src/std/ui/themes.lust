@@ -1,0 +1,60 @@
+-- std/ui/themes.lust
+-- Lust-authored IDE/UI theme presets.
+
+fn apply_classic_theme()
+    ui_theme("classic")
+    ui_set("theme.borders", true)
+    ui_set("theme.h", "=")
+    ui_set("theme.v", "|")
+    ui_set("theme.corner", "#")
+    ui_set("theme.source_label", "Editor")
+    ui_set("theme.preview_label", "Canvas")
+    ui_set("theme.diag_label", "Logs")
+end
+
+fn apply_classic_compact_theme()
+    ui_theme("classic")
+    ui_set("theme.borders", true)
+    ui_set("theme.h", "-")
+    ui_set("theme.v", "|")
+    ui_set("theme.corner", "+")
+    ui_set("theme.source_label", "Src")
+    ui_set("theme.preview_label", "Out")
+    ui_set("theme.diag_label", "Diag")
+end
+
+fn apply_tk_theme()
+    ui_theme("tk")
+    ui_set("theme.borders", true)
+    ui_set("theme.h", "-")
+    ui_set("theme.v", "|")
+    ui_set("theme.corner", "*")
+    ui_set("theme.source_label", "Editor")
+    ui_set("theme.preview_label", "Live")
+    ui_set("theme.diag_label", "Events")
+end
+
+fn apply_minimal_theme()
+    ui_theme("default")
+    ui_set("theme.borders", false)
+    ui_set("theme.source_label", "source")
+    ui_set("theme.preview_label", "preview")
+    ui_set("theme.diag_label", "diagnostics")
+end
+
+fn apply_theme(name)
+    if name == "classic" then
+        apply_classic_theme()
+        return "classic"
+    end
+    if name == "classic_compact" then
+        apply_classic_compact_theme()
+        return "classic_compact"
+    end
+    if name == "tk" then
+        apply_tk_theme()
+        return "tk"
+    end
+    apply_minimal_theme()
+    return "minimal"
+end

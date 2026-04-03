@@ -1,0 +1,89 @@
+type GameState = { map, player, entities, log, status }
+
+fn GameState.render()
+    let i = 0
+    while i < 30 do
+        print("")
+        i = i + 1
+    end
+    
+    print("--- LUST ROGUELIKE --- HP: ${self.player.hp}/${self.player.max_hp} ---")
+    
+    let all_entities = [self.player]
+    for e in self.entities do
+        all_entities.push(e)
+    end
+
+    let y = 0
+    while y < self.map.height do
+        print(self.map.get_row(y, all_entities))
+        y = y + 1
+    end
+    
+    print("-----------------------------------------")
+    for msg in self.log.messages do
+        print("> " + msg)
+    end
+    print("Status: " + self.status)
+    print("Move: WASD or arrows. Quit: Q.")
+end
+
+fn GameState.handle_input(key)
+    let dx = 0
+    let dy = 0
+    match key do
+        case Up then dy = -1
+        case Down then dy = 1
+        case Left then dx = -1
+        case Right then dx = 1
+        case Char(c) then
+            if c == "w" then dy = -1
+            else if c == "s" then dy = 1
+            else if c == "a" then dx = -1
+            else if c == "d" then dx = 1
+            end
+        case _ then
+    end
+
+    if dx != 0 or dy != 0 then
+        let dest_x = self.player.x + dx
+        let dest_y = self.player.y + dy
+        if not self.map.is_blocked(dest_x, dest_y) then
+            let blocked_by = self.player -- dummy
+            let found = false
+            for e in self.entities do
+                if e.blocks and e.hp > 0 and e.x == dest_x and e.y == dest_y then
+                    blocked_by = e
+                    found = true
+                end
+            end
+            
+            if found then
+                attack(self.player, blocked_by, self.log)
+            else
+                self.player.shift(dx, dy)
+            end
+            
+            for e in self.entities do
+                if e.hp > 0 and e.fighter and e.name != "Player" then
+                    let edx = random_int(-1, 1)
+                    let edy = random_int(-1, 1)
+                    let ex = e.x + edx
+                    let ey = e.y + edy
+                    if not self.map.is_blocked(ex, ey) then
+                        if ex == self.player.x and ey == self.player.y then
+                            attack(e, self.player, self.log)
+                        else
+                            e.shift(edx, edy)
+                        end
+                    end
+                end
+            end
+            self.status = "Action taken."
+        else
+            self.status = "Blocked!"
+        end
+    else
+        self.status = "Waiting..."
+    end
+end

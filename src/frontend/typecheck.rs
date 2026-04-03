@@ -720,6 +720,112 @@ impl TypeChecker {
                             constrain_expr(arg, env, InferredType::String);
                         }
                     }
+                    "__str_insert" => {
+                        if let Some(text) = args.first() {
+                            constrain_expr(text, env, InferredType::String);
+                        }
+                        if let Some(index) = args.get(1) {
+                            constrain_expr(index, env, InferredType::Number);
+                        }
+                        if let Some(part) = args.get(2) {
+                            constrain_expr(part, env, InferredType::String);
+                        }
+                    }
+                    "__str_delete_range" => {
+                        if let Some(text) = args.first() {
+                            constrain_expr(text, env, InferredType::String);
+                        }
+                        if let Some(start) = args.get(1) {
+                            constrain_expr(start, env, InferredType::Number);
+                        }
+                        if let Some(end) = args.get(2) {
+                            constrain_expr(end, env, InferredType::Number);
+                        }
+                    }
+                    "__str_find" => {
+                        if let Some(text) = args.first() {
+                            constrain_expr(text, env, InferredType::String);
+                        }
+                        if let Some(needle) = args.get(1) {
+                            constrain_expr(needle, env, InferredType::String);
+                        }
+                    }
+                    "ui_knob" | "ui_slider" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                        if let Some(min) = args.get(1) {
+                            constrain_expr(min, env, InferredType::Number);
+                        }
+                        if let Some(max) = args.get(2) {
+                            constrain_expr(max, env, InferredType::Number);
+                        }
+                        if let Some(default_value) = args.get(3) {
+                            constrain_expr(default_value, env, InferredType::Number);
+                        }
+                    }
+                    "ui_toggle" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                        if let Some(default_value) = args.get(1) {
+                            constrain_expr(default_value, env, InferredType::Boolean);
+                        }
+                    }
+                    "ui_textbox" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                        if let Some(default_value) = args.get(1) {
+                            constrain_expr(default_value, env, InferredType::String);
+                        }
+                    }
+                    "ui_caret" | "ui_selection_start" | "ui_selection_end" | "ui_scroll_y" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                        if let Some(default_value) = args.get(1) {
+                            constrain_expr(default_value, env, InferredType::Number);
+                        }
+                    }
+                    "ui_text_input" => {}
+                    "ui_key_left"
+                    | "ui_key_right"
+                    | "ui_key_up"
+                    | "ui_key_down"
+                    | "ui_key_enter"
+                    | "ui_key_esc"
+                    | "ui_key_backspace"
+                    | "ui_key_delete" => {}
+                    "ui_mouse_x"
+                    | "ui_mouse_y"
+                    | "ui_mouse_down"
+                    | "ui_mouse_clicked"
+                    | "ui_mouse_click_x"
+                    | "ui_mouse_click_y" => {}
+                    "ui_command" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                        if let Some(default_value) = args.get(1) {
+                            constrain_expr(default_value, env, InferredType::String);
+                        }
+                    }
+                    "ui_button" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                    }
+                    "ui_theme" => {
+                        if let Some(theme_name) = args.first() {
+                            constrain_expr(theme_name, env, InferredType::String);
+                        }
+                    }
+                    "ui_set" | "ui_get" => {
+                        if let Some(id) = args.first() {
+                            constrain_expr(id, env, InferredType::String);
+                        }
+                    }
                     "json_encode" => {}
                     "lustgex_match" => {
                         for arg in args {

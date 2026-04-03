@@ -1,0 +1,78 @@
+import "std/ui/classic"
+import "std/ui/editor"
+
+type CommandState = {
+    command: String,
+    select_left: Boolean,
+    select_right: Boolean,
+    clear_selection: Boolean,
+    extend_selection: Boolean
+}
+
+fn gather() -> CommandState
+    section("keys", "Commands")
+    let move_left = action("move_left", "Left", "Move caret left")
+    let move_right = action("move_right", "Right", "Move caret right")
+    let cmd_backspace = action("cmd_backspace", "Backspace", "Delete left char")
+    let cmd_delete = action("cmd_delete", "Delete", "Delete right char")
+    let cmd_newline = action("cmd_newline", "Newline", "Insert newline")
+    let cmd_up = action("cmd_up", "Up", "Move caret up")
+    let cmd_down = action("cmd_down", "Down", "Move caret down")
+    let cmd_home = action("cmd_home", "Home", "Move caret to line start")
+    let cmd_end = action("cmd_end", "End", "Move caret to line end")
+    let cmd_page_up = action("cmd_page_up", "Page Up", "Move caret up by viewport")
+    let cmd_page_down = action("cmd_page_down", "Page Down", "Move caret down by viewport")
+
+    section("selection", "Selection")
+    let select_left = action("select_left", "Sel Left", "Expand selection left")
+    let select_right = action("select_right", "Sel Right", "Expand selection right")
+    let clear_selection = action("clear_selection", "Clear Sel", "Collapse to caret")
+    let extend_selection = checkbutton("extend_mode", "Extend Sel", ui_get("editor.extend_selection", false))
+    ui_set("editor.extend_selection", extend_selection)
+
+    let command = ""
+    if move_left then
+        command = "left"
+    end
+    if move_right then
+        command = "right"
+    end
+    if cmd_backspace then
+        command = "backspace"
+    end
+    if cmd_delete then
+        command = "delete"
+    end
+    if cmd_newline then
+        command = "newline"
+    end
+    if cmd_up then
+        command = "up"
+    end
+    if cmd_down then
+        command = "down"
+    end
+    if cmd_home then
+        command = "home"
+    end
+    if cmd_end then
+        command = "end"
+    end
+    if cmd_page_up then
+        command = "page_up"
+    end
+    if cmd_page_down then
+        command = "page_down"
+    end
+    return CommandState {
+        command: command,
+        select_left: select_left,
+        select_right: select_right,
+        clear_selection: clear_selection,
+        extend_selection: extend_selection
+    }
+end
+
+fn resolve_runtime_command(button_command: String) -> String
+    return next_command("editor", button_command)
+end

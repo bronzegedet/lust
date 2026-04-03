@@ -1,0 +1,30 @@
+-- std/ui/editor_primitives.lust
+-- VM-backed text editing primitives intended for Lust-authored IDE/editor logic.
+
+fn text_insert(text, index, part)
+    return __str_insert(text, index, part)
+end
+
+fn text_delete(text, start, stop)
+    return __str_delete_range(text, start, stop)
+end
+
+fn text_find(text, needle)
+    return __str_find(text, needle)
+end
+
+fn cursor_left(cursor)
+    if cursor <= 0 then
+        return 0
+    end
+    return cursor - 1
+end
+
+fn cursor_right(cursor, text)
+    let next = cursor + 1
+    let max_len = length(__str_to_list(text))
+    if next > max_len then
+        return max_len
+    end
+    return next
+end

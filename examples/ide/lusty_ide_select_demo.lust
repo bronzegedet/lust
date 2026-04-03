@@ -1,0 +1,39 @@
+import "std/ui/classic"
+import "std/ui/editor"
+
+fn main()
+    init("Lusty IDE Select Demo")
+
+    let doc_id = "demo"
+    let text = ui_get("editor.text." + doc_id, "alpha beta gamma")
+    let sel_start = selection_start(doc_id, ui_get("editor.sel_start." + doc_id, 0.0))
+    let sel_end = selection_end(doc_id, ui_get("editor.sel_end." + doc_id, 5.0))
+
+    section("select", "Selection Replace")
+    let start_at = scale("sel_start", "Sel Start", 0.0, 50.0, sel_start)
+    let end_at = scale("sel_end", "Sel End", 0.0, 50.0, sel_end)
+    let replace_with = entry("replace_with", "Replace With", "LUST")
+    let do_replace = action("do_replace", "Replace", "Replace selected range")
+    let do_delete = action("do_delete", "Delete Sel", "Delete selected range")
+
+    let next_text = text
+    let next_start = start_at
+    let next_end = end_at
+
+    if do_replace then
+        next_text = replace_selection(next_text, next_start, next_end, replace_with)
+    end
+    if do_delete then
+        next_text = replace_selection(next_text, next_start, next_end, "")
+    end
+
+    ui_set("editor.text." + doc_id, next_text)
+    ui_set("editor.sel_start." + doc_id, next_start)
+    ui_set("editor.sel_end." + doc_id, next_end)
+
+    print("selection", next_start, next_end)
+    print("document")
+    print(next_text)
+end
+
+main()

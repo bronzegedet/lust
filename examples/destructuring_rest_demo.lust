@@ -1,0 +1,8 @@
+fn main()
+    let [name, id, ..] = "Jacob,101,extra,data,here" |> split(",")
+
+    print("name=${name}")
+    print("id=${id}")
+end
+
+main()

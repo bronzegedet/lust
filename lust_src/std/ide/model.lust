@@ -1,0 +1,195 @@
+import "std/ui/editor"
+
+type DocState = { doc_id: String, text: String, cursor: Number, sel_start: Number, sel_end: Number, scroll: Number }
+
+fn default_text() -> String
+    return "fn main()\n    print(\"hello\")\nend\n"
+end
+
+fn load(doc_id: String) -> DocState
+    let text = ui_get("editor.text." + doc_id, default_text())
+    let cursor = caret(doc_id, ui_get("editor.caret." + doc_id, 0.0))
+    let sel_start = selection_start(doc_id, ui_get("editor.sel_start." + doc_id, cursor))
+    let sel_end = selection_end(doc_id, ui_get("editor.sel_end." + doc_id, cursor))
+    let scroll = scroll_y(doc_id, ui_get("editor.scroll." + doc_id, 0.0))
+    return DocState {
+        doc_id: doc_id,
+        text: text,
+        cursor: cursor,
+        sel_start: sel_start,
+        sel_end: sel_end,
+        scroll: scroll
+    }
+end
+
+fn apply_host_goto(state: DocState) -> DocState
+    let line = ui_get("editor.host.goto_line", -1.0)
+    if line < 1.0 then
+        return state
+    end
+    ui_set("editor.host.goto_line", -1.0)
+    let cursor = line_col_to_index(state.text, line - 1.0, 0.0)
+    return DocState {
+        doc_id: state.doc_id,
+        text: state.text,
+        cursor: cursor,
+        sel_start: cursor,
+        sel_end: cursor,
+        scroll: state.scroll
+    }
+end
+
+fn apply_host_select_range(state: DocState) -> DocState
+    let start_line = ui_get("editor.host.select_start_line", -1.0)
+    let end_line = ui_get("editor.host.select_end_line", -1.0)
+    if start_line < 1.0 or end_line < 1.0 then
+        return state
+    end
+    ui_set("editor.host.select_start_line", -1.0)
+    ui_set("editor.host.select_end_line", -1.0)
+    let a = start_line
+    let b = end_line
+    if a > b then
+        a = end_line
+        b = start_line
+    end
+    let start_idx = line_col_to_index(state.text, a - 1.0, 0.0)
+    let end_col = line_length(state.text, b - 1.0)
+    let end_idx = line_col_to_index(state.text, b - 1.0, end_col)
+    return DocState {
+        doc_id: state.doc_id,
+        text: state.text,
+        cursor: end_idx,
+        sel_start: start_idx,
+        sel_end: end_idx,
+        scroll: state.scroll
+    }
+end
+
+fn apply_host_span(state: DocState) -> DocState
+    let start_line = ui_get("editor.host.goto_span_start", -1.0)
+    let end_line = ui_get("editor.host.goto_span_end", -1.0)
+    let mode = ui_get("editor.host.goto_span_mode", "")
+    if start_line < 1.0 or end_line < 1.0 then
+        return state
+    end
+    ui_set("editor.host.goto_span_start", -1.0)
+    ui_set("editor.host.goto_span_end", -1.0)
+    ui_set("editor.host.goto_span_mode", "")
+    let a = start_line
+    let b = end_line
+    if a > b then
+        a = end_line
+        b = start_line
+    end
+    let start_idx = line_col_to_index(state.text, a - 1.0, 0.0)
+    let end_col = line_length(state.text, b - 1.0)
+    let end_idx = line_col_to_index(state.text, b - 1.0, end_col)
+    if mode == "select" then
+        return DocState {
+            doc_id: state.doc_id,
+            text: state.text,
+            cursor: end_idx,
+            sel_start: start_idx,
+            sel_end: end_idx,
+            scroll: state.scroll
+        }
+    end
+    return DocState {
+        doc_id: state.doc_id,
+        text: state.text,
+        cursor: start_idx,
+        sel_start: start_idx,
+        sel_end: start_idx,
+        scroll: state.scroll
+    }
+end
+
+fn apply_selection_controls(state: DocState, select_left, select_right, clear_selection) -> DocState
+    let next_cursor = state.cursor
+    let next_sel_start = state.sel_start
+    let next_sel_end = state.sel_end
+    if select_left then
+        if next_sel_end > 0.0 then
+            next_sel_end = next_sel_end - 1.0
+        end
+    end
+    if select_right then
+        next_sel_end = next_sel_end + 1.0
+    end
+    if clear_selection then
+        next_sel_start = next_cursor
+        next_sel_end = next_cursor
+    end
+    return DocState {
+        doc_id: state.doc_id,
+        text: state.text,
+        cursor: next_cursor,
+        sel_start: next_sel_start,
+        sel_end: next_sel_end,
+        scroll: state.scroll
+    }
+end
+
+fn apply_input(state: DocState, typed: String, command: String, extend_selection: Boolean, page_lines: Number) -> DocState
+    let stepped = apply_edit_step_with_mode(
+        state.text,
+        state.cursor,
+        state.sel_start,
+        state.sel_end,
+        typed,
+        command,
+        extend_selection,
+        page_lines
+    )
+    return DocState {
+        doc_id: state.doc_id,
+        text: stepped.text,
+        cursor: stepped.cursor,
+        sel_start: stepped.sel_start,
+        sel_end: stepped.sel_end,
+        scroll: state.scroll
+    }
+end
+
+fn apply_hit_event(state: DocState, pending: Boolean, line: Number, col: Number, extend: Boolean) -> DocState
+    if not pending then
+        return state
+    end
+    let target = line_col_to_index(state.text, line, col)
+    let next_sel_start = target
+    let next_sel_end = target
+    if extend then
+        next_sel_start = state.sel_start
+        next_sel_end = target
+    end
+    return DocState {
+        doc_id: state.doc_id,
+        text: state.text,
+        cursor: target,
+        sel_start: next_sel_start,
+        sel_end: next_sel_end,
+        scroll: state.scroll
+    }
+end
+
+fn with_scroll_visible(state: DocState, viewport_lines: Number) -> DocState
+    let lc = index_to_line_col(state.text, state.cursor)
+    let next_scroll = ensure_scroll_visible(lc[0], state.scroll, viewport_lines)
+    return DocState {
+        doc_id: state.doc_id,
+        text: state.text,
+        cursor: state.cursor,
+        sel_start: state.sel_start,
+        sel_end: state.sel_end,
+        scroll: next_scroll
+    }
+end
+
+fn persist(state: DocState)
+    ui_set("editor.text." + state.doc_id, state.text)
+    ui_set("editor.caret." + state.doc_id, state.cursor)
+    ui_set("editor.sel_start." + state.doc_id, state.sel_start)
+    ui_set("editor.sel_end." + state.doc_id, state.sel_end)
+    ui_set("editor.scroll." + state.doc_id, state.scroll)
+end

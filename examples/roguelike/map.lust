@@ -1,0 +1,90 @@
+type Rect = { x1, y1, x2, y2 }
+
+fn Rect.center()
+    let cx = (self.x1 + self.x2) / 2
+    let cy = (self.y1 + self.y2) / 2
+    return [ cx - (cx % 1), cy - (cy % 1) ]
+end
+
+fn Rect.intersect(other: Rect)
+    return self.x1 <= other.x2 and self.x2 >= other.x1 and self.y1 <= other.y2 and self.y2 >= other.y1
+end
+
+type GameMap = { width, height, tiles }
+
+fn create_map(w, h)
+    let tiles = []
+    let i = 0
+    while i < w * h do
+        tiles.push(TILE_WALL)
+        i = i + 1
+    end
+    return GameMap { width: w, height: h, tiles: tiles }
+end
+
+fn GameMap.set_rect(r, tile)
+    let y = r.y1
+    let w = self.width
+    while y <= r.y2 do
+        let x = r.x1
+        while x <= r.x2 do
+            self.tiles[y * w + x] = tile
+            x = x + 1
+        end
+        y = y + 1
+    end
+end
+
+fn GameMap.is_blocked(x, y)
+    if x < 0 or x >= self.width or y < 0 or y >= self.height then
+        return true
+    end
+    return self.tiles[y * self.width + x] == TILE_WALL
+end
+
+fn GameMap.get_row(y, entities)
+    let row = ""
+    let x = 0
+    let w = self.width
+    while x < w do
+        let char = self.tiles[y * w + x]
+        for e in entities do
+            if e.hp > 0 and e.x == x and e.y == y then
+                char = e.char
+            end
+        end
+        row = row + char
+        x = x + 1
+    end
+    return row
+end
+
+fn create_h_tunnel(map, x1, x2, y)
+    let start = x1
+    let end_x = x2
+    if x1 > x2 then
+        start = x2
+        end_x = x1
+    end
+    let x = start
+    let w = map.width
+    while x <= end_x do
+        map.tiles[y * w + x] = TILE_FLOOR
+        x = x + 1
+    end
+end
+
+fn create_v_tunnel(map, y1, y2, x)
+    let start = y1
+    let end_y = y2
+    if y1 > y2 then
+        start = y2
+        end_y = y1
+    end
+    let y = start
+    let w = map.width
+    while y <= end_y do
+        map.tiles[y * w + x] = TILE_FLOOR
+        y = y + 1
+    end
+end

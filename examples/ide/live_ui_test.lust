@@ -1,0 +1,61 @@
+import "std/ui/classic"
+
+fn main()
+    init("Lust Live UI Test")
+
+    group("editor", "Editor")
+    row("editor", "r1", "Title")
+    row("editor", "r2", "Notes")
+    row("editor", "r3", "Autosave")
+    row("editor", "r4", "Run speed")
+    column("editor", "main", "Controls")
+
+    section("editor", "Live Controls")
+    let title = entry("title", "Title", "My Lust App")
+    place("field.title", "editor", "r1", "main")
+
+    let notes = textbox("notes", "Notes", "type here")
+    place("field.notes", "editor", "r2", "main")
+
+    let autosave = checkbutton("autosave", "Autosave", true)
+    place("toggle.autosave", "editor", "r3", "main")
+
+    let speed = scale("speed", "Run speed", 0.0, 1.0, 0.45)
+    place("slider.speed", "editor", "r4", "main")
+
+    group("actions", "Actions")
+    row("actions", "r1", "Apply")
+    row("actions", "r2", "Reset")
+    column("actions", "main", "Buttons")
+    section("actions", "Actions")
+
+    let apply_now = action("apply", "Apply", "Apply current settings")
+    place("button.apply", "actions", "r1", "main")
+
+    let reset_now = action("reset", "Reset", "Reset to defaults")
+    place("button.reset", "actions", "r2", "main")
+
+    let apply_count = ui_get("live.apply_count", 0.0)
+    if apply_now then
+        ui_set("live.apply_count", apply_count + 1.0)
+        ui_set("live.last_title", title)
+        ui_set("live.last_notes", notes)
+        ui_set("live.last_autosave", autosave)
+        ui_set("live.last_speed", speed)
+        print("applied", apply_count + 1.0, title, notes, autosave, speed)
+    end
+
+    if reset_now then
+        ui_set("field.title", "My Lust App")
+        ui_set("field.notes", "type here")
+        ui_set("toggle.autosave", true)
+        ui_set("slider.speed", 0.45)
+    end
+
+    let applied = ui_get("live.apply_count", 0.0)
+    ui_set("widget.label.live_summary", "Live summary (see output + ui_state)")
+    set_hint("live_summary", "Use Apply to snapshot the current control state.")
+
+end
+
+main()

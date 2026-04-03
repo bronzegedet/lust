@@ -1,0 +1,9 @@
+let MAP_WIDTH = 80
+let MAP_HEIGHT = 40
+
+let TILE_WALL = "#"
+let TILE_FLOOR = "."
+
+let CHAR_PLAYER = "@"
+let CHAR_ORC = "o"
+let CHAR_TROLL = "T"

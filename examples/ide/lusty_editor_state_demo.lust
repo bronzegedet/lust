@@ -1,0 +1,52 @@
+import "std/ui/classic"
+import "std/ui/editor_primitives"
+
+fn main()
+    init("Lusty Editor State Demo")
+
+    let seed = "fn main()\n    print(\"hello lust\")\nend"
+    let current = ui_get("editor.text", seed)
+
+    section("editor", "Document")
+    set_hint("editor", "This demo keeps editor state in VM ui_state.")
+    print("document")
+    print(current)
+
+    section("insert", "Insert")
+    let insert_at = scale("insert_at", "Insert At", 0.0, 200.0, 0.0)
+    let insert_text = entry("insert_text", "Insert Text", " -- edited")
+    let do_insert = action("apply_insert", "Apply Insert", "Insert text at index")
+
+    section("delete", "Delete Range")
+    let delete_start = scale("delete_start", "Delete Start", 0.0, 200.0, 0.0)
+    let delete_stop = scale("delete_stop", "Delete Stop", 0.0, 200.0, 4.0)
+    let do_delete = action("apply_delete", "Apply Delete", "Delete a range of text")
+
+    section("find", "Find")
+    let needle = entry("find_text", "Find Text", "lust")
+    let do_find = action("apply_find", "Find", "Find the first index of text")
+    let reset = action("reset_doc", "Reset", "Reset to seed document")
+
+    let next_text = current
+    if do_insert then
+        next_text = text_insert(next_text, insert_at, insert_text)
+    end
+    if do_delete then
+        next_text = text_delete(next_text, delete_start, delete_stop)
+    end
+    if reset then
+        next_text = seed
+    end
+    ui_set("editor.text", next_text)
+
+    if do_find then
+        ui_set("editor.last_find", text_find(next_text, needle))
+    end
+
+    let last_find = ui_get("editor.last_find", -1.0)
+    print("find_index", last_find)
+    print("updated_document")
+    print(next_text)
+end
+
+main()

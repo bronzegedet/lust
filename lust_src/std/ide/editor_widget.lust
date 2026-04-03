@@ -1,0 +1,179 @@
+import "std/ui/editor"
+import "std/ide/model"
+import "std/ui/classic"
+
+type HitEvent = { pending: Boolean, line: Number, col: Number, extend: Boolean }
+
+fn min_num(a: Number, b: Number) -> Number
+    if a <= b then
+        return a
+    end
+    return b
+end
+
+fn max_num(a: Number, b: Number) -> Number
+    if a >= b then
+        return a
+    end
+    return b
+end
+
+fn repeat_text(chunk: String, count: Number) -> String
+    let n = count
+    if n < 0 then
+        n = 0
+    end
+    let out = ""
+    let i = 0
+    while i < n do
+        out = out + chunk
+        i = i + 1
+    end
+    return out
+end
+
+fn clamp_line_scroll(lines: Dynamic, scroll: Number) -> Number
+    let total = lines.length()
+    if total <= 0 then
+        return 0
+    end
+    let pos = scroll
+    if pos < 0 then
+        pos = 0
+    end
+    let max_scroll = total - 1
+    if pos > max_scroll then
+        pos = max_scroll
+    end
+    return pos
+end
+
+fn line_has_selection(text: String, line_idx: Number, sel_start: Number, sel_end: Number) -> Boolean
+    if not has_selection(sel_start, sel_end) then
+        return false
+    end
+    let start = selection_min(sel_start, sel_end)
+    let stop = selection_max(sel_start, sel_end)
+    let line_start = line_col_to_index(text, line_idx, 0)
+    let line_end = line_col_to_index(text, line_idx, line_length(text, line_idx))
+    return start <= line_end and stop > line_start
+end
+
+fn emit_hit_event(doc_id: String, line: Number, col: Number, extend: Boolean)
+    ui_set("editor.hit.pending." + doc_id, true)
+    ui_set("editor.hit.line." + doc_id, line)
+    ui_set("editor.hit.col." + doc_id, col)
+    ui_set("editor.hit.extend." + doc_id, extend)
+end
+
+fn take_hit_event(doc_id: String) -> HitEvent
+    let pending = ui_get("editor.hit.pending." + doc_id, false)
+    let line = ui_get("editor.hit.line." + doc_id, 0.0)
+    let col = ui_get("editor.hit.col." + doc_id, 0.0)
+    let extend = ui_get("editor.hit.extend." + doc_id, false)
+    if pending then
+        ui_set("editor.hit.pending." + doc_id, false)
+    end
+    return HitEvent {
+        pending: pending,
+        line: line,
+        col: col,
+        extend: extend
+    }
+end
+
+fn pointer_hit_event(state: DocState, viewport_lines: Number) -> HitEvent
+    let lines = split_lines(state.text)
+    let total = lines.length()
+    if total <= 0 then
+        return HitEvent { pending: false, line: 0, col: 0, extend: false }
+    end
+    let start = clamp_line_scroll(lines, state.scroll)
+    let view = max_num(1, viewport_lines)
+    let clicked = mouse_clicked()
+    let held = mouse_down()
+    if not clicked and not held then
+        return HitEvent { pending: false, line: 0, col: 0, extend: false }
+    end
+    let local_y = mouse_y()
+    let local_x = mouse_x()
+    if clicked then
+        local_y = mouse_click_y()
+        local_x = mouse_click_x()
+    end
+    let target_line = start + local_y
+    if target_line < start or target_line >= start + view then
+        return HitEvent { pending: false, line: 0, col: 0, extend: false }
+    end
+    if target_line >= total then
+        target_line = total - 1
+    end
+    let col = local_x - 10
+    if col < 0 then
+        col = 0
+    end
+    let line_len = line_length(state.text, target_line)
+    if col > line_len then
+        col = line_len
+    end
+    let extend_mode = ui_get("editor.extend_selection", false)
+    let extend_once = ui_get("editor.pointer.extend_once", false)
+    if extend_once then
+        ui_set("editor.pointer.extend_once", false)
+    end
+    let extend = extend_mode or extend_once or held
+    return HitEvent {
+        pending: true,
+        line: target_line,
+        col: col,
+        extend: extend
+    }
+end
+
+fn render_editor(state: DocState, viewport_lines: Number)
+    let lines = split_lines(state.text)
+    let total = lines.length()
+    let view = max_num(1, viewport_lines)
+    let start = clamp_line_scroll(lines, state.scroll)
+    let stop = min_num(total, start + view)
+    let lc = index_to_line_col(state.text, state.cursor)
+    let sel_on = has_selection(state.sel_start, state.sel_end)
+
+    print("cursor", state.cursor, "line", lc[0], "col", lc[1], "scroll", state.scroll)
+    print("selection", state.sel_start, state.sel_end, "active", sel_on)
+
+    if start > 0 then
+        print("...")
+    end
+
+    let i = start
+    while i < stop do
+        let caret_marker = "  "
+        if i == lc[0] then
+            caret_marker = "> "
+        end
+        let sel_marker = " "
+        if line_has_selection(state.text, i, state.sel_start, state.sel_end) then
+            sel_marker = "*"
+        end
+        let gutter = caret_marker + sel_marker + " " + to_string(i + 1) + " | "
+        print(gutter + lines[i])
+        let goto_id = state.doc_id + ".goto." + to_string(i)
+        let sel_id = state.doc_id + ".sel." + to_string(i)
+        if action(goto_id, "Go " + to_string(i + 1), "Move caret to this line") then
+            emit_hit_event(state.doc_id, i, 0, false)
+        end
+        if action(sel_id, "Sel " + to_string(i + 1), "Extend selection to this line") then
+            emit_hit_event(state.doc_id, i, 0, true)
+        end
+        if i == lc[0] then
+            let caret_pad = repeat_text(" ", lc[1])
+            print("      | " + caret_pad + "^")
+        end
+        i = i + 1
+    end
+
+    if stop < total then
+        print("...")
+    end
+end

@@ -685,6 +685,102 @@ end
 }
 
 #[test]
+fn vm_poll_key_reads_seeded_runtime_keys() {
+    let vm = run_vm_snippet_with_args_and_keys(
+        r#"
+let key = poll_key()
+match key do
+    case Left then
+        print("left")
+    case Char(ch) then
+        print("char", ch)
+    case _ then
+        print("none")
+end
+"#,
+        vec![],
+        vec!["left\n".to_string()],
+    );
+
+    assert_eq!(vm.output(), &["left".to_string()]);
+}
+
+#[test]
+fn vm_draw_live_advances_headless_frames_after_window() {
+    let vm = run_vm_snippet(
+        r#"
+import "draw"
+print(live())
+window(64, 64, "vm draw")
+print(live(), live(), live())
+"#,
+    );
+
+    assert_eq!(
+        vm.output(),
+        &["false".to_string(), "true false false".to_string()]
+    );
+}
+
+#[test]
+fn vm_ui_numeric_controls_persist_and_clamp() {
+    let vm = run_vm_snippet(
+        r#"
+let start = ui_knob("gain", 0.0, 1.0, 0.4)
+ui_set("gain", 2.0)
+let clamped = ui_slider("gain", 0.0, 1.0, 0.0)
+print(start, clamped)
+"#,
+    );
+
+    assert_eq!(vm.output(), &["0.4 1".to_string()]);
+}
+
+#[test]
+fn vm_ui_toggle_and_textbox_persist_values() {
+    let vm = run_vm_snippet(
+        r#"
+let enabled = ui_toggle("enabled", false)
+ui_set("enabled", true)
+let enabled_after = ui_toggle("enabled", false)
+
+let name = ui_textbox("name", "ana")
+ui_set("name", "bea")
+let name_after = ui_textbox("name", "ana")
+
+print(enabled, enabled_after, name, name_after)
+"#,
+    );
+
+    assert_eq!(vm.output(), &["false true ana bea".to_string()]);
+}
+
+#[test]
+fn vm_ui_button_latch_is_edge_triggered() {
+    let vm = run_vm_snippet(
+        r#"
+ui_set("button.generate", true)
+print(ui_button("button.generate"), ui_button("button.generate"))
+"#,
+    );
+
+    assert_eq!(vm.output(), &["true false".to_string()]);
+}
+
+#[test]
+fn vm_ui_theme_sets_theme_state() {
+    let vm = run_vm_snippet(
+        r#"
+let selected = ui_theme("classic")
+ui_set("theme.source_label", "Editor")
+print(selected, ui_get("__theme", "default"), ui_get("theme.source_label", "Source"))
+"#,
+    );
+
+    assert_eq!(vm.output(), &["classic classic Editor".to_string()]);
+}
+
+#[test]
 fn vm_executes_input_builtin() {
     let vm = run_vm_snippet_with_runtime_inputs(
         r#"

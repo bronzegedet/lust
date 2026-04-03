@@ -1,0 +1,98 @@
+-- std/ui/classic.lust
+-- Tkinter-inspired, Lust-authored helper layer over core ui_* primitives.
+
+import "std/ui/themes"
+
+fn init(title)
+    apply_theme("tk")
+    ui_set("app.title", title)
+    ui_set("theme.source_label", "Editor")
+    ui_set("theme.preview_label", "Live UI")
+    ui_set("theme.diag_label", "Diagnostics")
+end
+
+fn label(id, text)
+    ui_set("widget.label." + id, text)
+    return text
+end
+
+fn title(text)
+    ui_set("app.title", text)
+end
+
+fn section(id, title_text)
+    ui_set("widget.section." + id, title_text)
+    return title_text
+end
+
+fn group(id, title_text)
+    ui_set("layout.group." + id + ".title", title_text)
+    return id
+end
+
+fn row(group_id, row_id, label_text)
+    ui_set("layout.row." + group_id + "." + row_id, label_text)
+    return row_id
+end
+
+fn column(group_id, column_id, label_text)
+    ui_set("layout.column." + group_id + "." + column_id, label_text)
+    return column_id
+end
+
+fn place(widget_id, group_id, row_id, column_id)
+    ui_set(
+        "layout.bind." + widget_id,
+        group_id + "/" + row_id + "/" + column_id
+    )
+end
+
+fn textbox(id, label_text, default_value)
+    label(id, label_text)
+    return ui_textbox("field." + id, default_value)
+end
+
+fn entry(id, label_text, default_value)
+    return textbox(id, label_text, default_value)
+end
+
+fn toggle(id, label_text, default_value)
+    label(id, label_text)
+    return ui_toggle("toggle." + id, default_value)
+end
+
+fn checkbutton(id, label_text, default_value)
+    return toggle(id, label_text, default_value)
+end
+
+fn slider(id, label_text, min_value, max_value, default_value)
+    label(id, label_text)
+    return ui_slider("slider." + id, min_value, max_value, default_value)
+end
+
+fn scale(id, label_text, min_value, max_value, default_value)
+    return slider(id, label_text, min_value, max_value, default_value)
+end
+
+fn knob(id, label_text, min_value, max_value, default_value)
+    label(id, label_text)
+    return ui_knob("knob." + id, min_value, max_value, default_value)
+end
+
+fn button(id, label_text)
+    ui_set("widget.button." + id + ".label", label_text)
+    return ui_button("button." + id)
+end
+
+fn set_hint(id, hint_text)
+    ui_set("widget.hint." + id, hint_text)
+end
+
+fn action(id, label_text, hint_text)
+    set_hint(id, hint_text)
+    return button(id, label_text)
+end
+
+fn set_button_pressed(id, pressed)
+    ui_set("button." + id, pressed)
+end

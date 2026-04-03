@@ -1,0 +1,2 @@
+let CROSS_G = 123
+fn get_cross() return CROSS_G end

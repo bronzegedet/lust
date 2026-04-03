@@ -1,0 +1,48 @@
+import "std/ui/classic"
+
+fn main()
+    init("Lust Form Demo")
+
+    group("identity", "Identity")
+    row("identity", "r1", "Name row")
+    row("identity", "r2", "Email row")
+    column("identity", "left", "Labels")
+    column("identity", "right", "Inputs")
+
+    section("identity", "Identity")
+    let name = entry("name", "Name", "Ada")
+    place("field.name", "identity", "r1", "right")
+    let email = entry("email", "Email", "ada@example.com")
+    place("field.email", "identity", "r2", "right")
+
+    group("controls", "Preferences")
+    row("controls", "r1", "Subscription row")
+    row("controls", "r2", "Volume row")
+    row("controls", "r3", "Warmth row")
+    row("controls", "r4", "Submit row")
+    column("controls", "main", "Main column")
+
+    section("controls", "Preferences")
+    let subscribed = checkbutton("subscribed", "Subscribed", true)
+    place("toggle.subscribed", "controls", "r1", "main")
+    let volume = scale("volume", "Volume", 0.0, 1.0, 0.7)
+    place("slider.volume", "controls", "r2", "main")
+    let warmth = knob("warmth", "Warmth", 0.0, 1.0, 0.4)
+    place("knob.warmth", "controls", "r3", "main")
+
+    let submitted = action("submit", "Submit", "Press submit to emit the current form values.")
+    place("button.submit", "controls", "r4", "main")
+
+    print("name", name)
+    print("email", email)
+    print("subscribed", subscribed)
+    print("volume", volume)
+    print("warmth", warmth)
+    print("submitted", submitted)
+
+    if submitted then
+        print("form", name, email, subscribed, volume, warmth)
+    end
+end
+
+main()

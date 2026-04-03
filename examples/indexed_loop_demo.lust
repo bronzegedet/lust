@@ -1,0 +1,10 @@
+let total = 0
+let labels = ""
+
+for i, n in [3, 4, 5] do
+    total += i + n
+    labels = labels + to_string(i) + ":" + to_string(n) + ";"
+end
+
+print("total", total)
+print("labels", labels)

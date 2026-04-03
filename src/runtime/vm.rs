@@ -1,16 +1,25 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
-use std::fs;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use crossterm::event::{read, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::event::KeyCode;
 use regex::Regex;
+use super::vm_memory::{VmMemoryBudget, VmMemoryStats};
+pub use super::vm_memory::VmMemorySnapshot;
 
-use crate::bytecode::{Function, Instruction, Program, RegexCaptureValue, Value};
-use crate::modules::audio;
+mod audio_builtins;
+mod collection_builtins;
+mod core_builtins;
+mod data_builtins;
+mod draw_builtins;
+mod io_builtins;
+mod regex_builtins;
+mod text_builtins;
+mod ui;
+
+use crate::bytecode::{Function, Instruction, Program, Value};
+use crate::modules::draw;
 
 struct CallFrame {
     function: String,
@@ -40,6 +49,20 @@ pub struct Vm {
     instruction_count: usize,
     opcode_counts: HashMap<&'static str, usize>,
     lustgex_cache: HashMap<String, Rc<CachedLustgexPattern>>,
+    draw_runtime: Option<draw::DrawRuntime>,
+    ui_state: HashMap<String, Value>,
+    ui_button_latches: HashMap<String, bool>,
+    ui_key_buffer: Option<draw::KeyToken>,
+    ui_mouse_x: f64,
+    ui_mouse_y: f64,
+    ui_mouse_down: bool,
+    ui_mouse_clicked: bool,
+    ui_mouse_click_x: f64,
+    ui_mouse_click_y: f64,
+    trace_enabled: bool,
+    trace_events: Vec<String>,
+    memory_budget: VmMemoryBudget,
+    memory_stats: VmMemoryStats,
 }
 
 impl Vm {
@@ -81,6 +104,20 @@ impl Vm {
             instruction_count: 0,
             opcode_counts: HashMap::new(),
             lustgex_cache: HashMap::new(),
+            draw_runtime: None,
+            ui_state: HashMap::new(),
+            ui_button_latches: HashMap::new(),
+            ui_key_buffer: None,
+            ui_mouse_x: 0.0,
+            ui_mouse_y: 0.0,
+            ui_mouse_down: false,
+            ui_mouse_clicked: false,
+            ui_mouse_click_x: 0.0,
+            ui_mouse_click_y: 0.0,
+            trace_enabled: false,
+            trace_events: Vec::new(),
+            memory_budget: VmMemoryBudget::from_env(),
+            memory_stats: VmMemoryStats::default(),
         }
     }
 
@@ -98,6 +135,7 @@ impl Vm {
             let instruction = self.current_instruction()?;
             self.current_frame_mut()?.ip += 1;
             self.execute_instruction(instruction)?;
+            self.enforce_memory_budget()?;
         }
     }
 
@@ -124,6 +162,9 @@ impl Vm {
             }
             Instruction::StoreGlobal(name) => {
                 let value = self.pop()?;
+                if !self.globals.contains_key(&name) {
+                    self.ensure_globals_len(self.globals.len().saturating_add(1))?;
+                }
                 self.globals.insert(name, value);
             }
             Instruction::LoadLocal(slot) => {
@@ -144,11 +185,13 @@ impl Vm {
                 frame.locals[slot] = value;
             }
             Instruction::BuildList(count) => {
+                self.ensure_list_len(count, "list literal")?;
                 let mut items = Vec::with_capacity(count);
                 for _ in 0..count {
                     items.push(self.pop()?);
                 }
                 items.reverse();
+                self.memory_stats.list_allocations = self.memory_stats.list_allocations.saturating_add(1);
                 self.stack.push(Value::List(Rc::new(RefCell::new(items))));
             }
             Instruction::BuildStruct(name, fields) => {
@@ -159,6 +202,7 @@ impl Vm {
                     .cloned()
                     .ok_or_else(|| format!("unknown struct '{}'", name))?;
                 let mut items = HashMap::new();
+                self.ensure_map_len(fields.len(), "struct literal")?;
                 for field in fields.iter().rev() {
                     let value = self.pop()?;
                     if !expected_fields.contains(field) {
@@ -166,6 +210,8 @@ impl Vm {
                     }
                     items.insert(field.clone(), value);
                 }
+                self.memory_stats.struct_allocations =
+                    self.memory_stats.struct_allocations.saturating_add(1);
                 self.stack
                     .push(Value::Struct(name, Rc::new(RefCell::new(items))));
             }
@@ -246,7 +292,18 @@ impl Vm {
                         items[idx] = value;
                     }
                     (Value::Map(items), Value::String(key)) => {
-                        items.borrow_mut().insert(key, value);
+                        {
+                            let mut map = items.borrow_mut();
+                            if !map.contains_key(&key) {
+                                self.ensure_map_len(
+                                    map.len().saturating_add(1),
+                                    "map index assignment",
+                                )?;
+                                self.memory_stats.map_insert_ops =
+                                    self.memory_stats.map_insert_ops.saturating_add(1);
+                            }
+                            map.insert(key, value);
+                        }
                     }
                     _ => {
                         return Err("index assignment is only supported on lists and maps".to_string())
@@ -391,6 +448,9 @@ impl Vm {
                         }
                     }
 
+                    self.ensure_list_len(results.len(), "map/filter result")?;
+                    self.memory_stats.list_allocations =
+                        self.memory_stats.list_allocations.saturating_add(1);
                     self.stack.push(Value::List(Rc::new(RefCell::new(results))));
                     return Ok(());
                 }
@@ -453,11 +513,15 @@ impl Vm {
                         }
                     }
 
+                    self.ensure_map_len(results.len(), "map/filter map result")?;
+                    self.memory_stats.map_allocations =
+                        self.memory_stats.map_allocations.saturating_add(1);
                     self.stack.push(Value::Map(Rc::new(RefCell::new(results))));
                     return Ok(());
                 }
 
                 let value = self.call_builtin(&name, args)?;
+                self.validate_value_memory(&value)?;
                 self.stack.push(value);
             }
             Instruction::CallDynamic(argc) => {
@@ -482,7 +546,13 @@ impl Vm {
                 let target = self.pop()?;
                 match target {
                     Value::List(items) => {
-                        items.borrow_mut().push(value);
+                        {
+                            let mut list = items.borrow_mut();
+                            self.ensure_list_len(list.len().saturating_add(1), "push() on list")?;
+                            list.push(value);
+                        }
+                        self.memory_stats.list_push_ops =
+                            self.memory_stats.list_push_ops.saturating_add(1);
                         self.stack.push(Value::Null);
                     }
                     other => {
@@ -606,6 +676,158 @@ impl Vm {
         &self.output
     }
 
+    pub fn ui_state_snapshot(&self) -> HashMap<String, Value> {
+        self.ui_state.clone()
+    }
+
+    pub fn restore_ui_state(&mut self, state: HashMap<String, Value>) -> Result<(), String> {
+        self.ensure_ui_state_len(state.len())?;
+        self.ui_button_latches.clear();
+        for (key, value) in &state {
+            if key.starts_with("button.") {
+                self.ui_button_latches.insert(key.clone(), value.truthy());
+            }
+        }
+        self.ui_state = state;
+        self.enforce_memory_budget()?;
+        Ok(())
+    }
+
+    pub fn set_trace_enabled(&mut self, enabled: bool) {
+        self.trace_enabled = enabled;
+    }
+
+    pub fn trace_events_snapshot(&self) -> Vec<String> {
+        self.trace_events.clone()
+    }
+
+    pub fn memory_snapshot(&self) -> VmMemorySnapshot {
+        VmMemorySnapshot {
+            stack_len: self.stack.len(),
+            stack_peak: self.memory_stats.peak_stack,
+            globals_len: self.globals.len(),
+            globals_peak: self.memory_stats.peak_globals,
+            ui_state_len: self.ui_state.len(),
+            ui_state_peak: self.memory_stats.peak_ui_state_entries,
+            trace_events_len: self.trace_events.len(),
+            list_allocations: self.memory_stats.list_allocations,
+            map_allocations: self.memory_stats.map_allocations,
+            struct_allocations: self.memory_stats.struct_allocations,
+            list_push_ops: self.memory_stats.list_push_ops,
+            map_insert_ops: self.memory_stats.map_insert_ops,
+            max_stack: self.memory_budget.max_stack,
+            max_globals: self.memory_budget.max_globals,
+            max_ui_state_entries: self.memory_budget.max_ui_state_entries,
+            max_trace_events: self.memory_budget.max_trace_events,
+            max_list_len: self.memory_budget.max_list_len,
+            max_map_len: self.memory_budget.max_map_len,
+        }
+    }
+
+    fn enforce_memory_budget(&mut self) -> Result<(), String> {
+        self.memory_stats.peak_stack = self.memory_stats.peak_stack.max(self.stack.len());
+        self.memory_stats.peak_globals = self.memory_stats.peak_globals.max(self.globals.len());
+        self.memory_stats.peak_ui_state_entries = self
+            .memory_stats
+            .peak_ui_state_entries
+            .max(self.ui_state.len());
+
+        if self.stack.len() > self.memory_budget.max_stack {
+            return Err(format!(
+                "vm memory guard: stack size {} exceeded limit {} (LUST_VM_MAX_STACK)",
+                self.stack.len(),
+                self.memory_budget.max_stack
+            ));
+        }
+        if self.globals.len() > self.memory_budget.max_globals {
+            return Err(format!(
+                "vm memory guard: globals size {} exceeded limit {} (LUST_VM_MAX_GLOBALS)",
+                self.globals.len(),
+                self.memory_budget.max_globals
+            ));
+        }
+        if self.ui_state.len() > self.memory_budget.max_ui_state_entries {
+            return Err(format!(
+                "vm memory guard: ui_state size {} exceeded limit {} (LUST_VM_MAX_UI_STATE)",
+                self.ui_state.len(),
+                self.memory_budget.max_ui_state_entries
+            ));
+        }
+        if self.trace_events.len() > self.memory_budget.max_trace_events {
+            return Err(format!(
+                "vm memory guard: trace events {} exceeded limit {} (LUST_VM_MAX_TRACE_EVENTS)",
+                self.trace_events.len(),
+                self.memory_budget.max_trace_events
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_globals_len(&self, len: usize) -> Result<(), String> {
+        if len > self.memory_budget.max_globals {
+            return Err(format!(
+                "vm memory guard: globals size {} exceeded limit {} (LUST_VM_MAX_GLOBALS)",
+                len, self.memory_budget.max_globals
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_ui_state_len(&self, len: usize) -> Result<(), String> {
+        if len > self.memory_budget.max_ui_state_entries {
+            return Err(format!(
+                "vm memory guard: ui_state size {} exceeded limit {} (LUST_VM_MAX_UI_STATE)",
+                len, self.memory_budget.max_ui_state_entries
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_list_len(&self, len: usize, context: &str) -> Result<(), String> {
+        if len > self.memory_budget.max_list_len {
+            return Err(format!(
+                "vm memory guard: list length {} exceeded limit {} in {} (LUST_VM_MAX_LIST_LEN)",
+                len, self.memory_budget.max_list_len, context
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_map_len(&self, len: usize, context: &str) -> Result<(), String> {
+        if len > self.memory_budget.max_map_len {
+            return Err(format!(
+                "vm memory guard: map/struct size {} exceeded limit {} in {} (LUST_VM_MAX_MAP_LEN)",
+                len, self.memory_budget.max_map_len, context
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_value_memory(&mut self, value: &Value) -> Result<(), String> {
+        match value {
+            Value::List(items) => {
+                let len = items.borrow().len();
+                self.ensure_list_len(len, "builtin return list")?;
+                self.memory_stats.list_allocations =
+                    self.memory_stats.list_allocations.saturating_add(1);
+            }
+            Value::Map(items) => {
+                let len = items.borrow().len();
+                self.ensure_map_len(len, "builtin return map")?;
+                self.memory_stats.map_allocations =
+                    self.memory_stats.map_allocations.saturating_add(1);
+            }
+            Value::Struct(_, fields) => {
+                let len = fields.borrow().len();
+                self.ensure_map_len(len, "builtin return struct")?;
+                self.memory_stats.struct_allocations =
+                    self.memory_stats.struct_allocations.saturating_add(1);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn record_instruction(&mut self, instruction: &Instruction) {
         if !self.profile_ops {
             return;
@@ -677,789 +899,34 @@ impl Vm {
     }
 
     fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, String> {
+        if let Some(result) = self.call_ui_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_audio_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_draw_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_io_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_data_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_text_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_collection_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_regex_builtin(name, &args) {
+            return result;
+        }
+        if let Some(result) = self.call_core_builtin(name, &args) {
+            return result;
+        }
         match name {
-            "println" => {
-                let line = args
-                    .iter()
-                    .map(Value::as_string)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                println!("{}", line);
-                self.output.push(line);
-                Ok(Value::Null)
-            }
-            "to_string" => {
-                if args.len() != 1 {
-                    return Err(format!("to_string expects 1 arg, got {}", args.len()));
-                }
-                Ok(Value::String(args[0].as_string()))
-            }
-            "to_number" => {
-                if args.len() != 1 {
-                    return Err(format!("to_number expects 1 arg, got {}", args.len()));
-                }
-                Ok(Value::Number(args[0].as_string().parse::<f64>().unwrap_or(0.0)))
-            }
-            "type_of" => {
-                if args.len() != 1 {
-                    return Err(format!("type_of expects 1 arg, got {}", args.len()));
-                }
-                Ok(Value::String(args[0].type_name()))
-            }
-            "debug" => {
-                if args.len() != 2 {
-                    return Err(format!("debug expects 2 args, got {}", args.len()));
-                }
-                let line = format!("DEBUG {} {}", args[0], args[1]);
-                println!("{}", line);
-                self.output.push(line);
-                Ok(args[1].clone())
-            }
-            "panic" => {
-                if args.len() != 1 {
-                    return Err(format!("panic expects 1 arg, got {}", args.len()));
-                }
-                Err(format!("lust panic: {}", args[0]))
-            }
-            "assert" => {
-                if args.len() != 2 {
-                    return Err(format!("assert expects 2 args, got {}", args.len()));
-                }
-                if args[0].truthy() {
-                    Ok(Value::Null)
-                } else {
-                    Err(format!("lust assert failed: {}", args[1]))
-                }
-            }
-            "__str_trim" => {
-                if args.len() != 1 {
-                    return Err(format!("trim expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(s) => Ok(Value::String(s.trim().to_string())),
-                    _ => Err("trim() is only supported on strings".to_string()),
-                }
-            }
-            "__str_at" => {
-                if args.len() != 2 {
-                    return Err(format!("at expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(s), Value::Number(idx)) => {
-                        let idx = *idx as usize;
-                        if let Some(c) = s.chars().nth(idx) {
-                            Ok(Value::String(c.to_string()))
-                        } else {
-                            Ok(Value::Null)
-                        }
-                    }
-                    _ => Err("at() expects a string target and numeric index".to_string()),
-                }
-            }
-            "__str_slice" => {
-                if args.len() != 3 {
-                    return Err(format!("slice expects 3 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1], &args[2]) {
-                    (Value::String(s), Value::Number(start), Value::Number(end)) => {
-                        let start = *start as usize;
-                        let end = *end as usize;
-                        if start <= end && end <= s.len() {
-                            Ok(Value::String(s[start..end].to_string()))
-                        } else {
-                            Ok(Value::Null)
-                        }
-                    }
-                    _ => Err("slice() expects a string target and numeric bounds".to_string()),
-                }
-            }
-            "__slice_range" => {
-                if args.len() != 3 {
-                    return Err(format!("slice_range expects 3 args, got {}", args.len()));
-                }
-                let start = optional_slice_bound(&args[1])?;
-                let end = optional_slice_bound(&args[2])?;
-                match &args[0] {
-                    Value::String(s) => {
-                        let start = start.unwrap_or(0);
-                        let end = end.unwrap_or(s.len());
-                        if start <= end && end <= s.len() {
-                            Ok(Value::String(s[start..end].to_string()))
-                        } else {
-                            Ok(Value::Null)
-                        }
-                    }
-                    Value::List(items) => {
-                        let items = items.borrow();
-                        let start = start.unwrap_or(0);
-                        let end = end.unwrap_or(items.len());
-                        if start <= end && end <= items.len() {
-                            Ok(Value::List(Rc::new(RefCell::new(items[start..end].to_vec()))))
-                        } else {
-                            Ok(Value::Null)
-                        }
-                    }
-                    _ => Ok(Value::Null),
-                }
-            }
-            "__str_contains" => {
-                if args.len() != 2 {
-                    return Err(format!("contains expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(s), Value::String(sub)) => Ok(Value::Bool(s.contains(sub))),
-                    _ => Err("contains() expects string target and string argument".to_string()),
-                }
-            }
-            "__str_starts_with" => {
-                if args.len() != 2 {
-                    return Err(format!("starts_with expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(s), Value::String(prefix)) => Ok(Value::Bool(s.starts_with(prefix))),
-                    _ => Err("starts_with() expects string target and string argument".to_string()),
-                }
-            }
-            "__str_ends_with" => {
-                if args.len() != 2 {
-                    return Err(format!("ends_with expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(s), Value::String(suffix)) => Ok(Value::Bool(s.ends_with(suffix))),
-                    _ => Err("ends_with() expects string target and string argument".to_string()),
-                }
-            }
-            "__str_split" => {
-                if args.len() != 2 {
-                    return Err(format!("split expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(s), Value::String(sep)) => {
-                        let parts = s
-                            .split(sep)
-                            .map(|part| Value::String(part.to_string()))
-                            .collect::<Vec<_>>();
-                        Ok(Value::List(Rc::new(RefCell::new(parts))))
-                    }
-                    _ => Err("split() expects string target and string separator".to_string()),
-                }
-            }
-            "__str_lines" => {
-                if args.len() != 1 {
-                    return Err(format!("lines expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(s) => {
-                        let parts = s
-                            .lines()
-                            .map(|part| Value::String(part.to_string()))
-                            .collect::<Vec<_>>();
-                        Ok(Value::List(Rc::new(RefCell::new(parts))))
-                    }
-                    _ => Err("lines() is only supported on strings".to_string()),
-                }
-            }
-            "__str_to_list" => {
-                if args.len() != 1 {
-                    return Err(format!("to_list expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(s) => {
-                        let parts = s
-                            .chars()
-                            .map(|c| Value::String(c.to_string()))
-                            .collect::<Vec<_>>();
-                        Ok(Value::List(Rc::new(RefCell::new(parts))))
-                    }
-                    _ => Err("to_list() is only supported on strings".to_string()),
-                }
-            }
-            "__str_replace" => {
-                if args.len() != 3 {
-                    return Err(format!("replace expects 3 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1], &args[2]) {
-                    (Value::String(s), Value::String(from), Value::String(to)) => {
-                        Ok(Value::String(s.replace(from, to)))
-                    }
-                    _ => Err("replace() expects string target and string arguments".to_string()),
-                }
-            }
-            "read_file" => {
-                if args.len() != 1 {
-                    return Err(format!("read_file expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(path) => {
-                        let content = std::fs::read_to_string(path)
-                            .map_err(|e| format!("read_file failed for '{}': {}", path, e))?;
-                        Ok(Value::String(content))
-                    }
-                    _ => Err("read_file expects a string path".to_string()),
-                }
-            }
-            "read_file_result" => {
-                if args.len() != 1 {
-                    return Err(format!("read_file_result expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(path) => match fs::read_to_string(path) {
-                        Ok(content) => Ok(Value::Enum(
-                            "FileResult".to_string(),
-                            "FileOk".to_string(),
-                            vec![Value::String(content)],
-                        )),
-                        Err(err) => Ok(Value::Enum(
-                            "FileResult".to_string(),
-                            "FileErr".to_string(),
-                            vec![Value::String(err.to_string())],
-                        )),
-                    },
-                    _ => Err("read_file_result expects a string path".to_string()),
-                }
-            }
-            "try_read_file" => {
-                if args.len() != 1 {
-                    return Err(format!("try_read_file expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(path) => {
-                        let content = std::fs::read_to_string(path).unwrap_or_default();
-                        Ok(Value::String(content))
-                    }
-                    _ => Err("try_read_file expects a string path".to_string()),
-                }
-            }
-            "write_file" => {
-                if args.len() != 2 {
-                    return Err(format!("write_file expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(path), Value::String(content)) => {
-                        std::fs::write(path, content)
-                            .map_err(|e| format!("write_file failed for '{}': {}", path, e))?;
-                        Ok(Value::Null)
-                    }
-                    _ => Err("write_file expects string path and string content".to_string()),
-                }
-            }
-            "open_file" => {
-                if args.len() != 2 {
-                    return Err(format!("open_file expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(path), Value::String(mode)) => {
-                        let mut options = OpenOptions::new();
-                        match mode.as_str() {
-                            "write" | "w" => {
-                                options.write(true).create(true).truncate(true);
-                            }
-                            "append" | "a" => {
-                                options.append(true).create(true);
-                            }
-                            _ => return Err(format!("open_file unsupported mode '{}'", mode)),
-                        }
-                        let file = options
-                            .open(path)
-                            .map_err(|e| format!("open_file failed for '{}': {}", path, e))?;
-                        let handle_id = self.next_file_handle_id;
-                        self.next_file_handle_id += 1;
-                        self.open_files.insert(handle_id, BufWriter::new(file));
-                        let mut fields = HashMap::new();
-                        fields.insert("id".to_string(), Value::Number(handle_id as f64));
-                        Ok(Value::Struct(
-                            "FileHandle".to_string(),
-                            Rc::new(RefCell::new(fields)),
-                        ))
-                    }
-                    _ => Err("open_file expects string path and string mode".to_string()),
-                }
-            }
-            "list_dir" => {
-                if args.len() != 1 {
-                    return Err(format!("list_dir expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(path) => {
-                        let mut entries = Vec::new();
-                        for entry_result in fs::read_dir(path)
-                            .map_err(|e| format!("list_dir failed for '{}': {}", path, e))?
-                        {
-                            let Ok(entry) = entry_result else {
-                                continue;
-                            };
-                            let Ok(name) = entry.file_name().into_string() else {
-                                continue;
-                            };
-                            entries.push(name);
-                        }
-                        entries.sort();
-                        Ok(Value::List(Rc::new(RefCell::new(
-                            entries.into_iter().map(Value::String).collect(),
-                        ))))
-                    }
-                    _ => Err("list_dir expects a string path".to_string()),
-                }
-            }
-            "compile_lustgex" => {
-                if args.len() != 1 {
-                    return Err(format!("compile_lustgex expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(pattern) => Ok(Value::String(
-                        self.get_or_compile_lustgex_pattern(pattern)?.compiled.clone(),
-                    )),
-                    _ => Err("compile_lustgex expects a string pattern".to_string()),
-                }
-            }
-            "lustgex_match" => {
-                if args.len() != 2 {
-                    return Err(format!("lustgex_match expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(text), Value::String(pattern)) => {
-                        let cached = self.get_or_compile_lustgex_pattern(pattern)?;
-                        Ok(Value::Bool(cached.regex.is_match(text)))
-                    }
-                    _ => Err("lustgex_match expects string text and string pattern".to_string()),
-                }
-            }
-            "lustgex_capture_builtin" => {
-                if args.len() != 2 {
-                    return Err(format!("lustgex_capture_builtin expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(text), Value::String(pattern)) => {
-                        let cached = self.get_or_compile_lustgex_pattern(pattern)?;
-                        let Some(captures) = cached.regex.captures(text) else {
-                            return Ok(Value::Null);
-                        };
-
-                        let mut fields = Vec::with_capacity(cached.capture_names.len());
-                        for name in &cached.capture_names {
-                            fields.push(captures.name(name).map(|m| m.as_str().to_string()));
-                        }
-
-                        Ok(Value::RegexCapture(Rc::new(RegexCaptureValue {
-                            field_slots: cached.capture_slots.clone(),
-                            fields,
-                        })))
-                    }
-                    _ => Err("lustgex_capture_builtin expects string text and string pattern".to_string()),
-                }
-            }
-            "regex_capture" => {
-                if args.len() != 3 {
-                    return Err(format!("regex_capture expects 3 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1], &args[2]) {
-                    (Value::String(text), Value::String(pattern), Value::List(names)) => {
-                        let regex = Regex::new(pattern)
-                            .map_err(|e| format!("regex_capture invalid regex '{}': {}", pattern, e))?;
-                        let Some(captures) = regex.captures(text) else {
-                            return Ok(Value::Null);
-                        };
-
-                        let mut fields = HashMap::new();
-                        for name_value in names.borrow().iter() {
-                            let Value::String(name) = name_value else {
-                                return Err("regex_capture expects a list of string capture names".to_string());
-                            };
-                            let value = captures
-                                .name(name)
-                                .map(|m| Value::String(m.as_str().to_string()))
-                                .unwrap_or(Value::Null);
-                            fields.insert(name.clone(), value);
-                        }
-
-                        Ok(Value::Struct(
-                            "RegexCapture".to_string(),
-                            Rc::new(RefCell::new(fields)),
-                        ))
-                    }
-                    _ => Err("regex_capture expects string text, string regex, and list capture names".to_string()),
-                }
-            }
-            "get_args" => {
-                let values = self
-                    .args
-                    .iter()
-                    .map(|arg| Value::String(arg.clone()))
-                    .collect::<Vec<_>>();
-                Ok(Value::List(Rc::new(RefCell::new(values))))
-            }
-            "launch_lust" => {
-                if args.len() != 2 {
-                    return Err(format!("launch_lust expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::String(mode), Value::String(path)) => {
-                        let exe = std::env::current_exe()
-                            .map_err(|e| format!("launch_lust failed to resolve current executable: {}", e))?;
-                        let status = std::process::Command::new(exe)
-                            .arg(mode)
-                            .arg(path)
-                            .status()
-                            .map_err(|e| format!("launch_lust failed: {}", e))?;
-                        Ok(Value::Number(status.code().unwrap_or(1) as f64))
-                    }
-                    _ => Err("launch_lust expects string mode and string path".to_string()),
-                }
-            }
-            "input" => {
-                let raw = if !self.input_lines.is_empty() {
-                    self.input_lines.remove(0)
-                } else {
-                    use std::io::{self, Write};
-                    let mut s = String::new();
-                    let _ = io::stdout().flush();
-                    io::stdin()
-                        .read_line(&mut s)
-                        .map_err(|e| format!("input failed: {}", e))?;
-                    s
-                };
-                Ok(Value::String(raw.trim().to_string()))
-            }
-            "clr" => {
-                if !args.is_empty() {
-                    return Err(format!("clr expects 0 args, got {}", args.len()));
-                }
-                use std::io::{self, Write};
-                print!("\x1B[2J\x1B[H");
-                io::stdout()
-                    .flush()
-                    .map_err(|e| format!("clr failed: {}", e))?;
-                Ok(Value::Null)
-            }
-            "prompt" => {
-                if args.len() != 1 {
-                    return Err(format!("prompt expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(message) => {
-                        use std::io::{self, Write};
-                        print!("{}", message);
-                        io::stdout()
-                            .flush()
-                            .map_err(|e| format!("prompt failed: {}", e))?;
-                        let raw = if !self.input_lines.is_empty() {
-                            self.input_lines.remove(0)
-                        } else {
-                            let mut s = String::new();
-                            io::stdin()
-                                .read_line(&mut s)
-                                .map_err(|e| format!("prompt failed: {}", e))?;
-                            s
-                        };
-                        Ok(Value::String(raw.trim().to_string()))
-                    }
-                    _ => Err("prompt expects a string message".to_string()),
-                }
-            }
-            "get_env" => {
-                if args.len() != 1 {
-                    return Err(format!("get_env expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(key) => Ok(Value::String(std::env::var(key).unwrap_or_default())),
-                    _ => Err("get_env expects a string key".to_string()),
-                }
-            }
-            "get_key" => {
-                if !self.key_inputs.is_empty() {
-                    let raw = self.key_inputs.remove(0);
-                    let trimmed = raw.trim().to_lowercase();
-                    let (variant, payload) = match trimmed.as_str() {
-                        "up" => ("Up", vec![]),
-                        "down" => ("Down", vec![]),
-                        "left" => ("Left", vec![]),
-                        "right" => ("Right", vec![]),
-                        "enter" => ("Enter", vec![]),
-                        "esc" => ("Esc", vec![]),
-                        _ => {
-                            let mut chars = trimmed.chars();
-                            match (chars.next(), chars.next()) {
-                                (Some(ch), None) => ("Char", vec![Value::String(ch.to_string())]),
-                                _ => ("None", vec![]),
-                            }
-                        }
-                    };
-                    return Ok(Value::Enum("Key".to_string(), variant.to_string(), payload));
-                }
-                
-                enable_raw_mode().map_err(|e| format!("failed to enable raw mode: {}", e))?;
-                let key = loop {
-                    if let Event::Key(event) = read().map_err(|e| format!("failed to read event: {}", e))? {
-                        if event.kind == KeyEventKind::Press {
-                            break match event.code {
-                                KeyCode::Up => ("Up", vec![]),
-                                KeyCode::Down => ("Down", vec![]),
-                                KeyCode::Left => ("Left", vec![]),
-                                KeyCode::Right => ("Right", vec![]),
-                                KeyCode::Enter => ("Enter", vec![]),
-                                KeyCode::Esc => ("Esc", vec![]),
-                                KeyCode::Char(c) => ("Char", vec![Value::String(c.to_string())]),
-                                _ => continue,
-                            };
-                        }
-                    }
-                };
-                disable_raw_mode().map_err(|e| format!("failed to disable raw mode: {}", e))?;
-                Ok(Value::Enum("Key".to_string(), key.0.to_string(), key.1))
-            }
-            "poll_key" => {
-                if !args.is_empty() {
-                    return Err(format!("poll_key expects 0 args, got {}", args.len()));
-                }
-                Ok(Value::Enum("Key".to_string(), "None".to_string(), vec![]))
-            }
-            "now" => {
-                if !args.is_empty() {
-                    return Err(format!("now expects 0 args, got {}", args.len()));
-                }
-                let seconds = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|e| e.to_string())?
-                    .as_secs_f64();
-                Ok(Value::Number(seconds))
-            }
-            "random_int" => {
-                if args.len() != 2 {
-                    return Err(format!("random_int expects 2 args, got {}", args.len()));
-                }
-                let min = args[0].as_number();
-                let max = args[1].as_number();
-                let start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-                let range = (max - min).abs();
-                if range == 0.0 { return Ok(Value::Number(min)); }
-                let rand = (start % 1_000_000) as f64 / 1_000_000.0 * range;
-                Ok(Value::Number((min + rand).floor()))
-            }
-            "random_float" => {
-                if args.len() != 2 {
-                    return Err(format!("random_float expects 2 args, got {}", args.len()));
-                }
-                let min = args[0].as_number();
-                let max = args[1].as_number();
-                let start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-                let range = max - min;
-                if range <= 0.0 { return Ok(Value::Number(min)); }
-                let frac = (start % 1_000_000) as f64 / 1_000_000.0;
-                Ok(Value::Number(min + frac * range))
-            }
-            "__range" | "__range_inclusive" => {
-                if args.len() != 2 {
-                    return Err(format!("{} expects 2 args, got {}", name, args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::Number(start), Value::Number(end)) => {
-                        let start = *start as i64;
-                        let end = *end as i64;
-                        let mut values = Vec::new();
-                        let inclusive = name == "__range_inclusive";
-                        if start <= end {
-                            let upper = if inclusive { end + 1 } else { end };
-                            for n in start..upper {
-                                values.push(Value::Number(n as f64));
-                            }
-                        } else {
-                            let lower = if inclusive { end } else { end + 1 };
-                            for n in (lower..=start).rev() {
-                                values.push(Value::Number(n as f64));
-                            }
-                        }
-                        Ok(Value::List(Rc::new(RefCell::new(values))))
-                    }
-                    _ => Err(format!("{} expects numeric start and end", name)),
-                }
-            }
-            "__map_keys" => {
-                if args.len() != 1 {
-                    return Err(format!("keys expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::Map(items) => {
-                        let mut keys = items.borrow().keys().cloned().collect::<Vec<_>>();
-                        keys.sort();
-                        let values = keys.into_iter().map(Value::String).collect::<Vec<_>>();
-                        Ok(Value::List(Rc::new(RefCell::new(values))))
-                    }
-                    _ => Err("keys() is only supported on maps".to_string()),
-                }
-            }
-            "__map_values" => {
-                if args.len() != 1 {
-                    return Err(format!("values expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::Map(items) => {
-                        let items = items.borrow();
-                        let mut keys = items.keys().cloned().collect::<Vec<_>>();
-                        keys.sort();
-                        let values = keys
-                            .into_iter()
-                            .map(|key| items.get(&key).cloned().unwrap_or(Value::Null))
-                            .collect::<Vec<_>>();
-                        Ok(Value::List(Rc::new(RefCell::new(values))))
-                    }
-                    _ => Err("values() is only supported on maps".to_string()),
-                }
-            }
-            "__map_entries" => {
-                if args.len() != 1 {
-                    return Err(format!("entries expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::Map(items) => {
-                        let items = items.borrow();
-                        let mut keys = items.keys().cloned().collect::<Vec<_>>();
-                        keys.sort();
-                        let entries = keys
-                            .into_iter()
-                            .map(|key| {
-                                Value::List(Rc::new(RefCell::new(vec![
-                                    Value::String(key.clone()),
-                                    items.get(&key).cloned().unwrap_or(Value::Null),
-                                ])))
-                            })
-                            .collect::<Vec<_>>();
-                        Ok(Value::List(Rc::new(RefCell::new(entries))))
-                    }
-                    _ => Err("entries() is only supported on maps".to_string()),
-                }
-            }
-            "__map_has" => {
-                if args.len() != 2 {
-                    return Err(format!("has expects 2 args, got {}", args.len()));
-                }
-                match (&args[0], &args[1]) {
-                    (Value::Map(items), Value::String(key)) => Ok(Value::Bool(items.borrow().contains_key(key))),
-                    _ => Err("has() expects a map receiver and string key".to_string()),
-                }
-            }
-            "dict" => {
-                if args.len() % 2 != 0 {
-                    return Err(format!("dict expects an even number of args, got {}", args.len()));
-                }
-                let mut items = HashMap::new();
-                let mut idx = 0usize;
-                while idx < args.len() {
-                    let key = match &args[idx] {
-                        Value::String(key) => key.clone(),
-                        _ => return Err("dict expects string keys".to_string()),
-                    };
-                    items.insert(key, args[idx + 1].clone());
-                    idx += 2;
-                }
-                Ok(Value::Map(Rc::new(RefCell::new(items))))
-            }
-            "json_encode" => {
-                if args.len() != 1 {
-                    return Err(format!("json_encode expects 1 arg, got {}", args.len()));
-                }
-                let encoded = lust_to_json_value(&args[0])?;
-                let encoded = serde_json::to_string(&encoded)
-                    .map_err(|e| format!("json_encode failed: {}", e))?;
-                Ok(Value::String(encoded))
-            }
-            "json_decode" => {
-                if args.len() != 1 {
-                    return Err(format!("json_decode expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(text) => {
-                        let decoded: serde_json::Value =
-                            serde_json::from_str(text).map_err(|e| format!("json_decode failed: {}", e))?;
-                        let pretty = serde_json::to_string_pretty(&decoded)
-                            .map_err(|e| format!("json_decode formatting failed: {}", e))?;
-                        Ok(Value::String(pretty))
-                    }
-                    _ => Err("json_decode expects a string argument".to_string()),
-                }
-            }
-            "json_parse" => {
-                if args.len() != 1 {
-                    return Err(format!("json_parse expects 1 arg, got {}", args.len()));
-                }
-                match &args[0] {
-                    Value::String(text) => {
-                        let decoded: serde_json::Value =
-                            serde_json::from_str(text).map_err(|e| format!("json_parse failed: {}", e))?;
-                        Ok(json_to_lust_value(decoded))
-                    }
-                    _ => Err("json_parse expects a string argument".to_string()),
-                }
-            }
-            "sleep" => {
-                if args.len() != 1 {
-                    return Err(format!("sleep expects 1 arg, got {}", args.len()));
-                }
-                match args[0] {
-                    Value::Number(seconds) => {
-                        std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
-                        Ok(Value::Null)
-                    }
-                    _ => Err("sleep expects a number argument".to_string()),
-                }
-            }
-            "audio_init" => {
-                self.require_import("audio", name)?;
-                audio::audio_init_native()?;
-                Ok(Value::Null)
-            }
-            "audio_set_freq" => {
-                self.require_import("audio", name)?;
-                if args.len() != 1 {
-                    return Err(format!("audio_set_freq expects 1 arg, got {}", args.len()));
-                }
-                match args[0] {
-                    Value::Number(freq) => {
-                        audio::audio_set_freq_native(freq)?;
-                        Ok(Value::Null)
-                    }
-                    _ => Err("audio_set_freq expects a number".to_string()),
-                }
-            }
-            "audio_set_gain" => {
-                self.require_import("audio", name)?;
-                if args.len() != 1 {
-                    return Err(format!("audio_set_gain expects 1 arg, got {}", args.len()));
-                }
-                match args[0] {
-                    Value::Number(gain) => {
-                        audio::audio_set_gain_native(gain)?;
-                        Ok(Value::Null)
-                    }
-                    _ => Err("audio_set_gain expects a number".to_string()),
-                }
-            }
-            "audio_note_on" => {
-                self.require_import("audio", name)?;
-                audio::audio_note_on_native()?;
-                Ok(Value::Null)
-            }
-            "audio_note_off" => {
-                self.require_import("audio", name)?;
-                audio::audio_note_off_native()?;
-                Ok(Value::Null)
-            }
-            "window" => {
-                self.require_import("draw", name)?;
-                let _ = args;
-                Ok(Value::Null)
-            }
-            "live" => {
-                self.require_import("draw", name)?;
-                if !args.is_empty() {
-                    return Err(format!("live expects 0 args, got {}", args.len()));
-                }
-                Ok(Value::Bool(false))
-            }
-            "clear_screen" | "circle" | "rect" | "line" | "triangle" | "text" => {
-                self.require_import("draw", name)?;
-                let _ = args;
-                Ok(Value::Null)
-            }
             _ => Err(format!("unknown builtin '{}'", name)),
         }
     }
@@ -1473,6 +940,199 @@ impl Vm {
                 builtin, module
             ))
         }
+    }
+
+    fn consume_queued_input_event(&mut self) -> Option<draw::KeyToken> {
+        if let Some(runtime) = self.draw_runtime.as_mut() {
+            match runtime.take_pending_key() {
+                Ok(Some(token)) => return Some(token),
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
+        if !self.key_inputs.is_empty() {
+            let raw = self.key_inputs.remove(0);
+            return Some(Self::decode_scripted_key(raw));
+        }
+        None
+    }
+
+    fn consume_queued_key(&mut self) -> Option<draw::KeyToken> {
+        loop {
+            let token = self.consume_queued_input_event()?;
+            if self.process_pointer_token(&token) {
+                continue;
+            }
+            return Some(token);
+        }
+    }
+
+    fn poll_pointer_events(&mut self) {
+        if self.ui_key_buffer.is_some() {
+            return;
+        }
+        loop {
+            let Some(token) = self.consume_queued_input_event() else {
+                break;
+            };
+            if self.process_pointer_token(&token) {
+                continue;
+            }
+            self.ui_key_buffer = Some(token);
+            break;
+        }
+    }
+
+    fn process_pointer_token(&mut self, token: &draw::KeyToken) -> bool {
+        match token.variant.as_str() {
+            "MouseMove" | "MouseDrag" => {
+                if let Some((x, y)) = parse_mouse_xy(&token.payload) {
+                    self.ui_mouse_x = x;
+                    self.ui_mouse_y = y;
+                }
+                true
+            }
+            "MouseDown" => {
+                if let Some((x, y)) = parse_mouse_xy(&token.payload) {
+                    self.ui_mouse_x = x;
+                    self.ui_mouse_y = y;
+                    self.ui_mouse_click_x = x;
+                    self.ui_mouse_click_y = y;
+                }
+                self.ui_mouse_down = true;
+                self.ui_mouse_clicked = true;
+                true
+            }
+            "MouseUp" => {
+                if let Some((x, y)) = parse_mouse_xy(&token.payload) {
+                    self.ui_mouse_x = x;
+                    self.ui_mouse_y = y;
+                }
+                self.ui_mouse_down = false;
+                true
+            }
+            "MouseScrollUp" | "MouseScrollDown" | "MouseScrollLeft" | "MouseScrollRight" => {
+                if let Some((x, y)) = parse_mouse_xy(&token.payload) {
+                    self.ui_mouse_x = x;
+                    self.ui_mouse_y = y;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn decode_scripted_key(raw: String) -> draw::KeyToken {
+        let trimmed = raw.trim().to_lowercase();
+        if let Some(payload) = trimmed.strip_prefix("mouse_move:") {
+            return scripted_mouse_token("MouseMove", payload);
+        }
+        if let Some(payload) = trimmed.strip_prefix("mouse_down:") {
+            return scripted_mouse_token("MouseDown", payload);
+        }
+        if let Some(payload) = trimmed.strip_prefix("mouse_up:") {
+            return scripted_mouse_token("MouseUp", payload);
+        }
+        if let Some(payload) = trimmed.strip_prefix("mouse_drag:") {
+            return scripted_mouse_token("MouseDrag", payload);
+        }
+        match trimmed.as_str() {
+            "up" => draw::KeyToken {
+                variant: "Up".to_string(),
+                payload: Vec::new(),
+            },
+            "down" => draw::KeyToken {
+                variant: "Down".to_string(),
+                payload: Vec::new(),
+            },
+            "left" => draw::KeyToken {
+                variant: "Left".to_string(),
+                payload: Vec::new(),
+            },
+            "right" => draw::KeyToken {
+                variant: "Right".to_string(),
+                payload: Vec::new(),
+            },
+            "enter" => draw::KeyToken {
+                variant: "Enter".to_string(),
+                payload: Vec::new(),
+            },
+            "backspace" => draw::KeyToken {
+                variant: "Backspace".to_string(),
+                payload: Vec::new(),
+            },
+            "delete" => draw::KeyToken {
+                variant: "Delete".to_string(),
+                payload: Vec::new(),
+            },
+            "esc" => draw::KeyToken {
+                variant: "Esc".to_string(),
+                payload: Vec::new(),
+            },
+            _ => {
+                let mut chars = trimmed.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(ch), None) => draw::KeyToken {
+                        variant: "Char".to_string(),
+                        payload: vec![ch.to_string()],
+                    },
+                    _ => draw::KeyToken {
+                        variant: "None".to_string(),
+                        payload: Vec::new(),
+                    },
+                }
+            }
+        }
+    }
+
+    fn decode_key_event(code: KeyCode) -> Option<draw::KeyToken> {
+        match code {
+            KeyCode::Up => Some(draw::KeyToken {
+                variant: "Up".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Down => Some(draw::KeyToken {
+                variant: "Down".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Left => Some(draw::KeyToken {
+                variant: "Left".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Right => Some(draw::KeyToken {
+                variant: "Right".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Enter => Some(draw::KeyToken {
+                variant: "Enter".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Backspace => Some(draw::KeyToken {
+                variant: "Backspace".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Delete => Some(draw::KeyToken {
+                variant: "Delete".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Esc => Some(draw::KeyToken {
+                variant: "Esc".to_string(),
+                payload: Vec::new(),
+            }),
+            KeyCode::Char(c) => Some(draw::KeyToken {
+                variant: "Char".to_string(),
+                payload: vec![c.to_string()],
+            }),
+            _ => None,
+        }
+    }
+
+    fn key_value(variant: &str, payload: Vec<String>) -> Value {
+        Value::Enum(
+            "Key".to_string(),
+            variant.to_string(),
+            payload.into_iter().map(Value::String).collect(),
+        )
     }
 
     fn call_value_method(
@@ -1557,7 +1217,15 @@ impl Vm {
                         Value::String(key) => key.clone(),
                         _ => return Err("set() expects a string key".to_string()),
                     };
-                    items.borrow_mut().insert(key, args[1].clone());
+                    {
+                        let mut map = items.borrow_mut();
+                        if !map.contains_key(&key) {
+                            self.ensure_map_len(map.len().saturating_add(1), "map.set()")?;
+                            self.memory_stats.map_insert_ops =
+                                self.memory_stats.map_insert_ops.saturating_add(1);
+                        }
+                        map.insert(key, args[1].clone());
+                    }
                     Ok(Some(Value::Null))
                 }
                 _ => Ok(None),
@@ -1696,7 +1364,27 @@ impl Vm {
     }
 }
 
-fn optional_slice_bound(value: &Value) -> Result<Option<usize>, String> {
+fn parse_mouse_xy(payload: &[String]) -> Option<(f64, f64)> {
+    let x = payload.first()?.parse::<f64>().ok()?;
+    let y = payload.get(1)?.parse::<f64>().ok()?;
+    Some((x.max(0.0).floor(), y.max(0.0).floor()))
+}
+
+fn scripted_mouse_token(variant: &str, payload_text: &str) -> draw::KeyToken {
+    let mut parts = payload_text.split(':');
+    let x = parts.next().unwrap_or("0").trim();
+    let y = parts.next().unwrap_or("0").trim();
+    let mut payload = vec![x.to_string(), y.to_string()];
+    if let Some(button) = parts.next() {
+        payload.push(button.trim().to_string());
+    }
+    draw::KeyToken {
+        variant: variant.to_string(),
+        payload,
+    }
+}
+
+pub(super) fn optional_slice_bound(value: &Value) -> Result<Option<usize>, String> {
     match value {
         Value::Null => Ok(None),
         Value::Number(n) if *n >= 0.0 => Ok(Some(*n as usize)),

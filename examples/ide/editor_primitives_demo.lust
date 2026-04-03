@@ -1,0 +1,17 @@
+import "std/ui/editor_primitives"
+
+fn main()
+    let text = "hello world"
+    let cursor = 5
+
+    let inserted = text_insert(text, cursor, ", lust")
+    let removed = text_delete(inserted, 0, 1)
+    let where_lust = text_find(removed, "lust")
+
+    print("base", text)
+    print("inserted", inserted)
+    print("removed", removed)
+    print("find_lust", where_lust)
+end
+
+main()

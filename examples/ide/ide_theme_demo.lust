@@ -1,0 +1,16 @@
+import "std/ui/themes"
+
+fn main()
+    let profile = apply_theme("classic")
+    print("theme", profile)
+
+    -- Demo controls/state used by lust ide shell.
+    let gain = ui_knob("synth.gain", 0.0, 1.0, 0.6)
+    let enabled = ui_toggle("synth.enabled", true)
+    let title = ui_textbox("title", "Lead")
+    let clicked = ui_button("button.generate")
+
+    print("gain", gain, "enabled", enabled, "title", title, "clicked", clicked)
+end
+
+main()

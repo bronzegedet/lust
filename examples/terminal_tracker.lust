@@ -1,0 +1,541 @@
+import "audio"
+
+type Tracker = { patterns, order, order_pos, cursor_row, cursor_channel, song_name, status }
+
+fn make_empty_cell()
+    return "--- .. ..."
+end
+
+fn make_empty_row()
+    return [make_empty_cell(), make_empty_cell(), make_empty_cell(), make_empty_cell()]
+end
+
+fn make_pattern()
+    let rows = []
+    let i = 0
+    while i < 16 do
+        rows.push(make_empty_row())
+        i = i + 1
+    end
+    return rows
+end
+
+fn make_tracker()
+    let patterns = [make_pattern()]
+    let order = [0]
+    return Tracker {
+        patterns: patterns,
+        order: order,
+        order_pos: 0,
+        cursor_row: 0,
+        cursor_channel: 0,
+        song_name: "untitled",
+        status: "type 'help' for commands"
+    }
+end
+
+fn repeat_text(text, count)
+    let out = ""
+    let i = 0
+    while i < count do
+        out = out + text
+        i = i + 1
+    end
+    return out
+end
+
+fn clear_screen()
+    print(repeat_text("\n", 24))
+end
+
+fn row_label(row_index)
+    if row_index < 10 then
+        return "0" + to_string(row_index)
+    end
+    return to_string(row_index)
+end
+
+fn join_numbers(items, separator)
+    let out = ""
+    let i = 0
+    while i < items.length() do
+        out = out + to_string(items[i])
+        if i < items.length() - 1 then
+            out = out + separator
+        end
+        i = i + 1
+    end
+    return out
+end
+
+fn join_cells(items, separator)
+    let out = ""
+    let i = 0
+    while i < items.length() do
+        out = out + items[i]
+        if i < items.length() - 1 then
+            out = out + separator
+        end
+        i = i + 1
+    end
+    return out
+end
+
+fn cell_note(cell)
+    return cell.slice(0, 3)
+end
+
+fn cell_inst(cell)
+    return cell.slice(4, 6)
+end
+
+fn cell_fx(cell)
+    return cell.slice(7, 10)
+end
+
+fn make_cell(note, inst, fx)
+    return note + " " + inst + " " + fx
+end
+
+fn is_valid_note_name(prefix)
+    let names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
+    let i = 0
+    while i < names.length() do
+        if names[i] == prefix then
+            return 1
+        end
+        i = i + 1
+    end
+    return 0
+end
+
+fn is_digit_char(ch)
+    let digits = "0123456789"
+    return digits.contains(ch)
+end
+
+fn is_hex_char(ch)
+    let hex = "0123456789ABCDEFabcdef"
+    return hex.contains(ch)
+end
+
+fn parse_int(raw)
+    let s = raw.trim()
+    let value = 0
+    let i = 0
+    while i < s.length() do
+        let ch = s.at(i)
+        if not is_digit_char(ch) then
+            return value
+        end
+        value = value * 10 + ("0123456789".split(ch)[0].length())
+        i = i + 1
+    end
+    return value
+end
+
+fn normalize_note(raw)
+    let s = raw.trim()
+    if s == "" or s == "---" then
+        return "---"
+    end
+    if s.length() != 3 then
+        return ""
+    end
+    let prefix = s.slice(0, 2)
+    let octave = s.at(2)
+    if is_valid_note_name(prefix) == 1 and is_digit_char(octave) then
+        return prefix + octave
+    end
+    return ""
+end
+
+fn normalize_inst(raw)
+    let s = raw.trim()
+    if s == "" or s == ".." then
+        return ".."
+    end
+    if s.length() != 2 then
+        return ""
+    end
+    if is_hex_char(s.at(0)) and is_hex_char(s.at(1)) then
+        return s
+    end
+    return ""
+end
+
+fn normalize_fx(raw)
+    let s = raw.trim()
+    if s == "" or s == "..." then
+        return "..."
+    end
+    if s.length() != 3 then
+        return ""
+    end
+    if is_hex_char(s.at(0)) and is_hex_char(s.at(1)) and is_hex_char(s.at(2)) then
+        return s
+    end
+    return ""
+end
+
+fn parse_cell(raw)
+    let parts = raw.trim().split(" ")
+    if parts.length() >= 3 then
+        let note = normalize_note(parts[0])
+        let inst = normalize_inst(parts[1])
+        let fx = normalize_fx(parts[2])
+        if note != "" and inst != "" and fx != "" then
+            return make_cell(note, inst, fx)
+        end
+    end
+    return make_empty_cell()
+end
+
+fn find_note_index(prefix)
+    let names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
+    let i = 0
+    while i < names.length() do
+        if names[i] == prefix then
+            return i
+        end
+        i = i + 1
+    end
+    return 99
+end
+
+fn note_base_freq(prefix)
+    let freqs = [261.63, 277.18, 293.66, 311.13, 329.63, 349.23, 369.99, 392.0, 415.3, 440.0, 466.16, 493.88]
+    let idx = find_note_index(prefix)
+    if idx < freqs.length() then
+        return freqs[idx]
+    end
+    return 0
+end
+
+fn note_to_freq(note)
+    let normalized = normalize_note(note)
+    if normalized == "" or normalized == "---" then
+        return 0
+    end
+    let prefix = normalized.slice(0, 2)
+    let octave = parse_int(normalized.at(2))
+    let freq = note_base_freq(prefix)
+    if freq <= 0 then
+        return 0
+    end
+    let current = 4
+    while current < octave do
+        freq = freq * 2
+        current = current + 1
+    end
+    while current > octave do
+        freq = freq / 2
+        current = current - 1
+    end
+    return freq
+end
+
+fn Tracker.current_pattern_index()
+    return self.order[self.order_pos]
+end
+
+fn Tracker.ensure_pattern(index)
+    let patterns = self.patterns
+    while patterns.length() <= index do
+        patterns.push(make_pattern())
+    end
+    self.patterns = patterns
+end
+
+fn Tracker.render()
+    clear_screen()
+    let current_pattern = self.current_pattern_index()
+    let rows = self.patterns[current_pattern]
+    print("Lust Tracker")
+    print("Song: " + self.song_name)
+    print("Status: " + self.status)
+    print("Order: " + to_string(self.order_pos) + "/" + to_string(self.order.length() - 1) + "  Pattern: " + to_string(current_pattern))
+    print("Keys: arrows move, ':' opens command mode, q quits")
+    print("Commands: note C-4, ins 01, fx A0F, rest, pat next|prev|new, ord next|prev|append, save/load, q")
+    print("")
+    print("Row | CH0         CH1         CH2         CH3")
+    print("----+---------------------------------------------")
+
+    let row_index = 0
+    while row_index < rows.length() do
+        let row = rows[row_index]
+        let line = row_label(row_index) + " | "
+        let ch = 0
+        while ch < row.length() do
+            let cell = row[ch]
+            if row_index == self.cursor_row and ch == self.cursor_channel then
+                line = line + "[" + cell + "]"
+            else
+                line = line + " " + cell + " "
+            end
+            if ch < row.length() - 1 then
+                line = line + " "
+            end
+            ch = ch + 1
+        end
+        print(line)
+        row_index = row_index + 1
+    end
+    print("")
+end
+
+fn Tracker.save_to(path)
+    let out = "song|" + self.song_name + "\n"
+    out = out + "order|" + join_numbers(self.order, "|") + "\n"
+    let p = 0
+    while p < self.patterns.length() do
+        out = out + "pattern|" + to_string(p) + "\n"
+        let rows = self.patterns[p]
+        let r = 0
+        while r < rows.length() do
+            out = out + join_cells(rows[r], "|") + "\n"
+            r = r + 1
+        end
+        p = p + 1
+    end
+    write_file(path, out)
+    return "saved " + path
+end
+
+fn Tracker.load_from(path)
+    let content = read_file(path)
+    let lines = content.split("\n")
+    self.patterns = [make_pattern()]
+    self.order = [0]
+    self.order_pos = 0
+    let current_pattern = 0
+    let row_idx = 0
+    let line_idx = 0
+    while line_idx < lines.length() do
+        let line = lines[line_idx].trim()
+        if line.length() > 0 then
+            let parts = line.split("|")
+            if parts[0] == "song" and parts.length() > 1 then
+                self.song_name = parts[1]
+            end
+            if parts[0] == "order" then
+                let order = [0]
+                if parts.length() > 1 then
+                    order[0] = parse_int(parts[1])
+                    let i = 2
+                    while i < parts.length() do
+                        order.push(parse_int(parts[i]))
+                        i = i + 1
+                    end
+                end
+                self.order = order
+            end
+            if parts[0] == "pattern" and parts.length() > 1 then
+                current_pattern = parse_int(parts[1])
+                self.ensure_pattern(current_pattern)
+                row_idx = 0
+            end
+            if parts[0] != "song" and parts[0] != "order" and parts[0] != "pattern" then
+                self.ensure_pattern(current_pattern)
+                if row_idx < self.patterns[current_pattern].length() then
+                    let ch = 0
+                    while ch < 4 do
+                        if ch < parts.length() then
+                            self.patterns[current_pattern][row_idx][ch] = parse_cell(parts[ch])
+                        end
+                        ch = ch + 1
+                    end
+                    row_idx = row_idx + 1
+                end
+            end
+        end
+        line_idx = line_idx + 1
+    end
+    return "loaded " + path
+end
+
+fn Tracker.apply_command(command)
+    let cmd = command.trim()
+    let current_pattern = self.current_pattern_index()
+    if cmd == "" then
+        self.status = "ready"
+        return 1
+    end
+    if cmd == "q" then
+        audio_note_off()
+        self.status = "bye"
+        return 0
+    end
+    if cmd == "w" then
+        if self.cursor_row > 0 then
+            self.cursor_row = self.cursor_row - 1
+        end
+        self.status = "cursor up"
+        return 1
+    end
+    if cmd == "s" then
+        if self.cursor_row < 15 then
+            self.cursor_row = self.cursor_row + 1
+        end
+        self.status = "cursor down"
+        return 1
+    end
+    if cmd == "a" then
+        if self.cursor_channel > 0 then
+            self.cursor_channel = self.cursor_channel - 1
+        end
+        self.status = "cursor left"
+        return 1
+    end
+    if cmd == "d" then
+        if self.cursor_channel < 3 then
+            self.cursor_channel = self.cursor_channel + 1
+        end
+        self.status = "cursor right"
+        return 1
+    end
+    if cmd == "rest" then
+        self.patterns[current_pattern][self.cursor_row][self.cursor_channel] = make_empty_cell()
+        audio_note_off()
+        self.status = "cleared cell"
+        return 1
+    end
+    if cmd == "help" then
+        self.status = "note/ins/fx, pat next|prev|new, ord next|prev|append, save/load, q"
+        return 1
+    end
+
+    let parts = cmd.split(" ")
+    if parts.length() >= 2 and parts[0] == "note" then
+        let note = normalize_note(parts[1])
+        if note == "" then
+            self.status = "invalid note; use C-4, D#5, or ---"
+        else
+            let cell = self.patterns[current_pattern][self.cursor_row][self.cursor_channel]
+            self.patterns[current_pattern][self.cursor_row][self.cursor_channel] = make_cell(note, cell_inst(cell), cell_fx(cell))
+            audio_set_freq(note_to_freq(note))
+            audio_note_on()
+            self.status = "note set to " + note
+        end
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "ins" then
+        let inst = normalize_inst(parts[1])
+        if inst == "" then
+            self.status = "invalid instrument; use two hex chars like 01 or 0A"
+        else
+            let cell = self.patterns[current_pattern][self.cursor_row][self.cursor_channel]
+            self.patterns[current_pattern][self.cursor_row][self.cursor_channel] = make_cell(cell_note(cell), inst, cell_fx(cell))
+            self.status = "instrument set to " + inst
+        end
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "fx" then
+        let fx = normalize_fx(parts[1])
+        if fx == "" then
+            self.status = "invalid effect; use three hex chars like A0F"
+        else
+            let cell = self.patterns[current_pattern][self.cursor_row][self.cursor_channel]
+            self.patterns[current_pattern][self.cursor_row][self.cursor_channel] = make_cell(cell_note(cell), cell_inst(cell), fx)
+            self.status = "effect set to " + fx
+        end
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "pat" then
+        if parts[1] == "next" then
+            let order = self.order
+            order[self.order_pos] = (current_pattern + 1) % self.patterns.length()
+            self.order = order
+            self.status = "pattern set to " + to_string(self.order[self.order_pos])
+        end
+        if parts[1] == "prev" then
+            let order = self.order
+            if current_pattern == 0 then
+                order[self.order_pos] = self.patterns.length() - 1
+            else
+                order[self.order_pos] = current_pattern - 1
+            end
+            self.order = order
+            self.status = "pattern set to " + to_string(self.order[self.order_pos])
+        end
+        if parts[1] == "new" then
+            let patterns = self.patterns
+            patterns.push(make_pattern())
+            self.patterns = patterns
+            let order = self.order
+            order[self.order_pos] = self.patterns.length() - 1
+            self.order = order
+            self.status = "new pattern " + to_string(self.order[self.order_pos])
+        end
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "ord" then
+        if parts[1] == "next" then
+            if self.order_pos < self.order.length() - 1 then
+                self.order_pos = self.order_pos + 1
+            end
+            self.status = "order position " + to_string(self.order_pos)
+        end
+        if parts[1] == "prev" then
+            if self.order_pos > 0 then
+                self.order_pos = self.order_pos - 1
+            end
+            self.status = "order position " + to_string(self.order_pos)
+        end
+        if parts[1] == "append" then
+            let order = self.order
+            order.push(current_pattern)
+            self.order = order
+            self.order_pos = self.order.length() - 1
+            self.status = "appended pattern " + to_string(current_pattern) + " to order"
+        end
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "save" then
+        self.status = self.save_to(parts[1])
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "load" then
+        self.status = self.load_from(parts[1])
+        return 1
+    end
+    if parts.length() >= 2 and parts[0] == "name" then
+        self.song_name = parts[1]
+        self.status = "song renamed"
+        return 1
+    end
+
+    self.status = "unknown command: " + cmd
+    return 1
+end
+
+fn main()
+    audio_init()
+    audio_set_gain(0.12)
+    let tracker = make_tracker()
+    let running = 1
+    while running do
+        tracker.render()
+        let key = get_key()
+        if key == Key.Up then
+            running = tracker.apply_command("w")
+        else if key == Key.Down then
+            running = tracker.apply_command("s")
+        else if key == Key.Left then
+            running = tracker.apply_command("a")
+        else if key == Key.Right then
+            running = tracker.apply_command("d")
+        else if key == Char(":") then
+            print("\n> ")
+            running = tracker.apply_command(input())
+        else if key == Char("q") then
+            running = tracker.apply_command("q")
+        else
+            tracker.status = "key ignored"
+        end
+    end
+    audio_note_off()
+    print("tracker closed")
+end
+
+main()

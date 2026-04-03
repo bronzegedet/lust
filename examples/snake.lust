@@ -1,0 +1,304 @@
+import "draw"
+
+type Point = { x: Number, y: Number }
+type Game = {
+    snake: List<Point>,
+    dir_x: Number,
+    dir_y: Number,
+    food: Point,
+    food_seed: Number,
+    score: Number,
+    over: Number
+}
+
+fn board_cols() -> Number
+    return 20
+end
+
+fn board_rows() -> Number
+    return 15
+end
+
+fn cell_size() -> Number
+    return 12
+end
+
+fn hud_height() -> Number
+    return 28
+end
+
+fn board_width() -> Number
+    return board_cols() * cell_size()
+end
+
+fn board_height() -> Number
+    return board_rows() * cell_size() + hud_height()
+end
+
+fn make_point(x: Number, y: Number) -> Point
+    return Point { x: x, y: y }
+end
+
+fn same_point(a: Point, b: Point) -> Number
+    if a.x == b.x and a.y == b.y then
+        return 1
+    end
+    return 0
+end
+
+fn snake_contains(snake: List<Point>, point: Point) -> Number
+    let i = 0
+    while i < snake.length() do
+        if same_point(snake[i], point) then
+            return 1
+        end
+        i = i + 1
+    end
+    return 0
+end
+
+fn next_food(snake: List<Point>, seed: Number) -> Point
+    let total = board_cols() * board_rows()
+    let start = seed % total
+    let offset = 0
+    while offset < total do
+        let idx = (start + offset) % total
+        let x = idx % board_cols()
+        let y = (idx - x) / board_cols()
+        let point = make_point(x, y)
+        if snake_contains(snake, point) == 0 then
+            return point
+        end
+        offset = offset + 1
+    end
+    return make_point(0, 0)
+end
+
+fn make_initial_snake() -> List<Point>
+    let snake: List<Point> = []
+    snake.push(make_point(5, 7))
+    snake.push(make_point(6, 7))
+    snake.push(make_point(7, 7))
+    return snake
+end
+
+fn make_game() -> Game
+    let snake = make_initial_snake()
+    let seed = 11
+    return Game {
+        snake: snake,
+        dir_x: 1,
+        dir_y: 0,
+        food: next_food(snake, seed),
+        food_seed: seed,
+        score: 0,
+        over: 0
+    }
+end
+
+fn reset_game(game: Game)
+    let snake = make_initial_snake()
+    let seed = 11
+    game.snake = snake
+    game.dir_x = 1
+    game.dir_y = 0
+    game.food = next_food(snake, seed)
+    game.food_seed = seed
+    game.score = 0
+    game.over = 0
+end
+
+fn set_direction(game: Game, dx: Number, dy: Number)
+    if game.dir_x + dx == 0 and game.dir_y + dy == 0 then
+        return
+    end
+    game.dir_x = dx
+    game.dir_y = dy
+end
+
+fn copy_range(items: List<Point>, start: Number, finish: Number) -> List<Point>
+    let out: List<Point> = []
+    let i = start
+    while i < finish do
+        out.push(items[i])
+        i = i + 1
+    end
+    return out
+end
+
+fn advance_snake(game: Game)
+    if game.over == 1 then
+        return
+    end
+
+    let head = game.snake[game.snake.length() - 1]
+    let new_head = make_point(head.x + game.dir_x, head.y + game.dir_y)
+
+    if new_head.x < 0 or new_head.y < 0 or new_head.x >= board_cols() or new_head.y >= board_rows() then
+        game.over = 1
+        return
+    end
+
+    let ate = same_point(new_head, game.food)
+    let body_to_check = copy_range(game.snake, 1, game.snake.length())
+    if ate == 1 then
+        body_to_check = copy_range(game.snake, 0, game.snake.length())
+    end
+    if snake_contains(body_to_check, new_head) == 1 then
+        game.over = 1
+        return
+    end
+
+    let next_snake = copy_range(game.snake, 1, game.snake.length())
+    if ate == 1 then
+        next_snake = copy_range(game.snake, 0, game.snake.length())
+    end
+    next_snake.push(new_head)
+    game.snake = next_snake
+
+    if ate == 1 then
+        game.score = game.score + 1
+        game.food_seed = game.food_seed + 17
+        game.food = next_food(game.snake, game.food_seed)
+    end
+end
+
+fn draw_cell(x: Number, y: Number, color)
+    let px = x * cell_size()
+    let py = y * cell_size() + hud_height()
+    rect(px + 1, py + 1, cell_size() - 2, cell_size() - 2, color)
+end
+
+fn draw_board()
+    let y = 0
+    while y < board_rows() do
+        let x = 0
+        while x < board_cols() do
+            if (x + y) % 2 == 0 then
+                draw_cell(x, y, dark_gray)
+            else
+                draw_cell(x, y, black)
+            end
+            x = x + 1
+        end
+        y = y + 1
+    end
+end
+
+fn draw_snake(game: Game)
+    let i = 0
+    while i < game.snake.length() do
+        if i == game.snake.length() - 1 then
+            draw_cell(game.snake[i].x, game.snake[i].y, neon_pink)
+        else
+            draw_cell(game.snake[i].x, game.snake[i].y, green)
+        end
+        i = i + 1
+    end
+end
+
+fn draw_food(game: Game)
+    draw_cell(game.food.x, game.food.y, red)
+end
+
+fn draw_hud(game: Game)
+    rect(0, 0, board_width(), hud_height(), blue)
+    text("snake", 6, 6, 8, white)
+    text("score " + to_string(game.score), 62, 6, 8, white)
+    if game.over == 1 then
+        text("game over", 132, 6, 8, neon_pink)
+    else
+        text("arrows/wasd no reverse", 110, 6, 8, white)
+    end
+end
+
+fn render(game: Game)
+    clear_screen(black)
+    draw_board()
+    draw_food(game)
+    draw_snake(game)
+    draw_hud(game)
+    if game.over == 1 then
+        text("press enter to restart", 18, board_height() - 12, 8, white)
+    else
+        text("q quits", board_width() - 44, board_height() - 12, 8, white)
+    end
+end
+
+fn apply_key(game: Game, key) -> Number
+    if key == Key.Up or key == Char("w") then
+        set_direction(game, 0, -1)
+        return 1
+    end
+    if key == Key.Down or key == Char("s") then
+        set_direction(game, 0, 1)
+        return 1
+    end
+    if key == Key.Left or key == Char("a") then
+        set_direction(game, -1, 0)
+        return 1
+    end
+    if key == Key.Right or key == Char("d") then
+        set_direction(game, 1, 0)
+        return 1
+    end
+    if key == Key.Enter then
+        if game.over == 1 then
+            reset_game(game)
+        end
+        return 1
+    end
+    if key == Char("q") or key == Key.Esc then
+        return 0
+    end
+    return 1
+end
+
+fn frame_delay() -> Number
+    if get_env("LUST_DRAW_HEADLESS") == "1" then
+        return 0
+    end
+    let configured = to_number(get_env("LUST_SNAKE_FRAME_DELAY"))
+    if configured > 0 then
+        return configured
+    end
+    return 0.016
+end
+
+fn step_frames() -> Number
+    let configured = to_number(get_env("LUST_SNAKE_STEP_FRAMES"))
+    if configured > 0 then
+        return configured
+    end
+    return 6
+end
+
+fn main()
+    print("Snake controls: arrows or WASD, no immediate reverse, Enter restarts, q quits.")
+    window(board_width(), board_height(), "Lust Snake")
+
+    let game = make_game()
+    let running = 1
+    let frames_until_step = 0
+    let step_frames = step_frames()
+    while running do
+        render(game)
+        if not live() then
+            running = 0
+        else
+            running = apply_key(game, poll_key())
+            if running == 1 and game.over == 0 then
+                frames_until_step = frames_until_step + 1
+                if frames_until_step >= step_frames then
+                    advance_snake(game)
+                    frames_until_step = 0
+                end
+            end
+            sleep(frame_delay())
+        end
+    end
+
+    print("final score", game.score)
+end
+
+main()

@@ -1,0 +1,26 @@
+import "std/ui/classic"
+import "std/ide/model"
+import "std/ide/editor_widget"
+
+fn render_header(title: String)
+    init(title)
+end
+
+fn render_document(state: DocState)
+    section("doc", "Document")
+    set_hint("doc", "Viewport view with line numbers, caret, and selection markers.")
+    render_editor(state, 12)
+end
+
+fn render_updated(state: DocState)
+    section("doc_after", "Updated")
+    render_editor(state, 12)
+end
+
+fn consume_hit_event(state: DocState, viewport_lines: Number) -> HitEvent
+    let button_hit = take_hit_event(state.doc_id)
+    if button_hit.pending then
+        return button_hit
+    end
+    return pointer_hit_event(state, viewport_lines)
+end

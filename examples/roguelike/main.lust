@@ -1,0 +1,107 @@
+import "constants"
+import "entity"
+import "map"
+import "combat"
+import "engine"
+
+type DungeonResult = { rooms: List<Rect>, entities: List<Entity> }
+
+fn generate_dungeon(map, max_rooms, room_min, room_max)
+    let entities: List<Entity> = []
+    let rooms: List<Rect> = []
+    let attempts = 0
+    while rooms.length() < max_rooms and attempts < 100 do
+        let w = random_int(room_min, room_max)
+        let h = random_int(room_min, room_max)
+        let x = random_int(1, map.width - w - 1)
+        let y = random_int(1, map.height - h - 1)
+        
+        let new_room = Rect { x1: x, y1: y, x2: x + w, y2: y + h }
+        let failed = false
+        for other in rooms do
+            if new_room.intersect(other) then
+                failed = true
+            end
+        end
+        
+        if not failed then
+            map.set_rect(new_room, TILE_FLOOR)
+            let center = new_room.center()
+            
+            if rooms.length() > 0 then
+                let prev_center = rooms[rooms.length() - 1].center()
+                if random_int(0, 1) == 1 then
+                    create_h_tunnel(map, prev_center[0], center[0], prev_center[1])
+                    create_v_tunnel(map, prev_center[1], center[1], center[0])
+                else
+                    create_v_tunnel(map, prev_center[1], center[1], prev_center[0])
+                    create_h_tunnel(map, prev_center[0], center[0], center[1])
+                end
+            end
+
+            rooms.push(new_room)
+            
+            if rooms.length() > 1 then
+                let num_monsters = random_int(0, 2)
+                let m_idx = 0
+                while m_idx < num_monsters do
+                    let mx = center[0] + random_int(-1, 1)
+                    let my = center[1] + random_int(-1, 1)
+                    
+                    let is_orc = random_int(0, 100) < 80
+                    let m_char = CHAR_ORC
+                    let m_name = "Orc"
+                    if not is_orc then
+                        m_char = CHAR_TROLL
+                        m_name = "Troll"
+                    end
+                    entities.push(Entity {
+                        x: mx, y: my,
+                        char: m_char, name: m_name,
+                        blocks: true, fighter: true,
+                        hp: 10, max_hp: 10, defense: 0, power: 3
+                    })
+                    m_idx = m_idx + 1
+                end
+            end
+        end
+        attempts = attempts + 1
+    end
+    return DungeonResult { rooms: rooms, entities: entities }
+end
+
+fn main()
+    let player = Entity { 
+        x: 0, y: 0, 
+        char: CHAR_PLAYER, name: "Player", 
+        blocks: true, fighter: true, 
+        hp: 30, max_hp: 30, defense: 2, power: 5 
+    }
+    
+    let map = create_map(MAP_WIDTH, MAP_HEIGHT)
+    
+    let res = generate_dungeon(map, 30, 6, 10)
+    let rooms = res.rooms
+    let entities = res.entities
+    
+    let start_center = rooms[0].center()
+    player.x = start_center[0]
+    player.y = start_center[1]
+    
+    let log = MessageLog { messages: ["Welcome to the Lust Roguelike! (Cleanest version)"] }
+    let state = GameState { map: map, player: player, entities: entities, log: log, status: "Ready." }
+    
+    let running = true
+    while running do
+        state.render()
+        let key = get_key()
+        if key == Esc or key == Char("q") or key == Char("Q") then
+            running = false
+        else
+            state.handle_input(key)
+        end
+    end
+    print("Game closed.")
+end
+
+main()
