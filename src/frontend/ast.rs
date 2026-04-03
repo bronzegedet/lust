@@ -14,7 +14,7 @@ pub enum Expr {
     MethodCall(Box<Expr>, String, Vec<Expr>),
     List(Vec<Expr>),
     MapLit(Vec<(Expr, Expr)>),
-    StructInst(String, Vec<(String, Expr)>),
+    StructInst(String, Vec<(String, Expr)>, Option<Box<Expr>>),
     EnumVariant(String, Vec<Expr>),
 }
 

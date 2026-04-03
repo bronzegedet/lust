@@ -5,6 +5,10 @@ import "std/ui/editor_primitives"
 
 type EditState = { text: String, cursor: Number, sel_start: Number, sel_end: Number }
 
+fn index_floor(value)
+    return value - (value % 1.0)
+end
+
 fn caret(doc_id, default_value)
     return ui_caret(doc_id, default_value)
 end
@@ -87,13 +91,14 @@ end
 
 fn clamp_cursor(text, cursor)
     let size = text.to_list().length()
-    if cursor < 0 then
+    let whole = index_floor(cursor)
+    if whole < 0 then
         return 0
     end
-    if cursor > size then
+    if whole > size then
         return size
     end
-    return cursor
+    return whole
 end
 
 fn apply_text_input(text, cursor, chunk)
@@ -189,13 +194,14 @@ end
 
 fn line_length(text, line_idx)
     let lines = split_lines(text)
-    if line_idx < 0 then
+    let target = index_floor(line_idx)
+    if target < 0 then
         return 0
     end
-    if line_idx >= lines.length() then
+    if target >= lines.length() then
         return 0
     end
-    return lines[line_idx].to_list().length()
+    return lines[target].to_list().length()
 end
 
 fn index_to_line_col(text, index)
@@ -217,8 +223,8 @@ fn index_to_line_col(text, index)
 end
 
 fn line_col_to_index(text, target_line, target_col)
-    let line_goal = target_line
-    let col_goal = target_col
+    let line_goal = index_floor(target_line)
+    let col_goal = index_floor(target_col)
     if line_goal < 0 then
         line_goal = 0
     end
@@ -255,7 +261,7 @@ fn move_cursor_vertical(text, cursor, delta_lines)
     let line = lc[0]
     let col = lc[1]
 
-    let goal_line = line + delta_lines
+    let goal_line = line + index_floor(delta_lines)
     let max_line = line_count(text) - 1
     if goal_line < 0 then
         goal_line = 0
@@ -278,21 +284,47 @@ fn move_cursor_line_end(text, cursor)
 end
 
 fn ensure_scroll_visible(cursor_line, scroll, viewport_lines)
-    let view = viewport_lines
+    let view = index_floor(viewport_lines)
+    let cursor_line_i = index_floor(cursor_line)
+    let scroll_i = index_floor(scroll)
     if view <= 0 then
         return 0
     end
-    if cursor_line < scroll then
-        return cursor_line
+    if cursor_line_i < scroll_i then
+        return cursor_line_i
     end
-    if cursor_line >= scroll + view then
-        return cursor_line - view + 1
+    if cursor_line_i >= scroll_i + view then
+        return cursor_line_i - view + 1
     end
-    return scroll
+    return scroll_i
 end
 
 fn collapse_selection(cursor)
     return [cursor, cursor]
+end
+
+fn move_cursor(text, cursor, sel_start, sel_end, delta, extend_selection)
+    let pos = clamp_cursor(text, cursor)
+    let target = clamp_cursor(text, pos + index_floor(delta))
+
+    if not extend_selection then
+        return EditState { text: text, cursor: target, sel_start: target, sel_end: target }
+    end
+
+    let start = clamp_cursor(text, selection_min(sel_start, sel_end))
+    let stop = clamp_cursor(text, selection_max(sel_start, sel_end))
+    let anchor = pos
+    if has_selection(sel_start, sel_end) then
+        if pos <= start then
+            anchor = stop
+        else
+            anchor = start
+        end
+    end
+
+    let next_start = selection_min(anchor, target)
+    let next_end = selection_max(anchor, target)
+    return EditState { text: text, cursor: target, sel_start: next_start, sel_end: next_end }
 end
 
 fn apply_insert(text, cursor, sel_start, sel_end, chunk)
@@ -385,14 +417,14 @@ fn apply_navigation_with_mode(text, cursor, sel_start, sel_end, command, extend_
         return EditState { text: text, cursor: end_cursor, sel_start: end_cursor, sel_end: end_cursor }
     end
     if command == "page_up" then
-        let up_cursor = move_cursor_vertical(text, pos, 0 - page_lines)
+        let up_cursor = move_cursor_vertical(text, pos, 0 - index_floor(page_lines))
         if extend_selection then
             return EditState { text: text, cursor: up_cursor, sel_start: start, sel_end: up_cursor }
         end
         return EditState { text: text, cursor: up_cursor, sel_start: up_cursor, sel_end: up_cursor }
     end
     if command == "page_down" then
-        let down_cursor = move_cursor_vertical(text, pos, page_lines)
+        let down_cursor = move_cursor_vertical(text, pos, index_floor(page_lines))
         if extend_selection then
             return EditState { text: text, cursor: down_cursor, sel_start: start, sel_end: down_cursor }
         end

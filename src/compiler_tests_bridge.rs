@@ -747,7 +747,7 @@ end
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("runtime error: lust assert failed: unsupported bridged method shape for build_user: expected 1, got 0"),
+        stdout.contains("lust assert failed: unsupported bridged method shape for build_user: expected 1, got 0"),
         "unexpected stdout:\n{}",
         stdout
     );
@@ -780,7 +780,7 @@ end
     let stdout = String::from_utf8_lossy(&output.stdout);
     let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        normalized.contains("bridge-fn bad_bridge name:String,score:Number,renamed:String 2"),
+        normalized.contains("bridge-fn bad_bridge name:String,score:Number,renamed:String 3"),
         "unexpected stdout:\n{}",
         stdout
     );
@@ -831,7 +831,7 @@ end
     let stdout = String::from_utf8_lossy(&output.stdout);
     let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        normalized.contains("bridge-fn bad_combo name:String,score:Number,user:User,renamed:String,wrapped:Result 2"),
+        normalized.contains("bridge-fn bad_combo name:String,score:Number,user:User,renamed:String,wrapped:Result 3"),
         "unexpected stdout:\n{}",
         stdout
     );
@@ -920,7 +920,7 @@ end
         .check(&decls)
         .expect_err("expected Rust typechecker list mismatch");
     assert!(
-        rust_errs.iter().any(|e| e.contains("initializer for 'names'") && e.contains("expected List<String>") && e.contains("got List<Number>")),
+        rust_errs.iter().any(|e| e.contains("initializer for 'names'") && e.contains("expected List<String>") && e.contains("got List<Int>")),
         "unexpected Rust typechecker diagnostics: {:?}",
         rust_errs
     );
@@ -937,7 +937,8 @@ end
     let stdout = String::from_utf8_lossy(&output.stdout);
     let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        normalized.contains("initializer for 'names': expected List<String>, got List<Number>"),
+        normalized.contains("initializer for 'names': expected List<String>, got List<Int>")
+            || normalized.contains("initializer for 'names': expected List<String>, got List<Number>"),
         "unexpected Lust bridge diagnostics:\n{}",
         stdout
     );

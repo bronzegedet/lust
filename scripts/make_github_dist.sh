@@ -62,24 +62,29 @@ for rel in "${INCLUDE_PATHS[@]}"; do
   fi
 done
 
-cat > "${OUT_DIR}/DIST_CONTENTS.md" <<EOF
+cat > "${OUT_DIR}/DIST_CONTENTS.md" <<'EOF'
 # GitHub Upload Dist
 
-This folder is a curated upload bundle created by `scripts/make_github_dist.sh`.
-Profile: ${PROFILE}
+This folder is a curated upload bundle created by scripts/make_github_dist.sh.
 
 Included:
-- Core Rust project files and metadata (`Cargo.toml`, `Cargo.lock`)
-- Primary docs (`README`, guides, roadmap/changelog)
-- Source trees (`src`, `lust_src`)
-${INCLUDED_SUMMARY}
+- Core Rust project files and metadata (Cargo.toml, Cargo.lock)
+- Primary docs (README, guides, roadmap/changelog)
+- Source trees (src, lust_src)
 
 Intentionally excluded:
-- `.git/`
-- `target/`
-- `archive/`
-- Existing binary/upload bundles under `dist/`
+- .git/
+- target/
+- archive/
+- Existing binary/upload bundles under dist/
 - Local/editor/system artifacts not required for source upload
 EOF
+
+{
+  echo ""
+  echo "Profile: ${PROFILE}"
+  echo "Included profile-specific:"
+  echo "${INCLUDED_SUMMARY}"
+} >> "${OUT_DIR}/DIST_CONTENTS.md"
 
 echo "Created ${OUT_DIR}"

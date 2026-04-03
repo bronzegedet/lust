@@ -215,6 +215,48 @@ impl Vm {
                 self.stack
                     .push(Value::Struct(name, Rc::new(RefCell::new(items))));
             }
+            Instruction::BuildStructUpdate(name, fields) => {
+                let expected_fields = self
+                    .program
+                    .struct_defs
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown struct '{}'", name))?;
+                let mut items = HashMap::new();
+                self.ensure_map_len(fields.len(), "struct update literal")?;
+                for field in fields.iter().rev() {
+                    let value = self.pop()?;
+                    if !expected_fields.contains(field) {
+                        return Err(format!("unknown field '{}' for struct '{}'", field, name));
+                    }
+                    items.insert(field.clone(), value);
+                }
+                let base = self.pop()?;
+                let base_fields = match base {
+                    Value::Struct(base_name, base_fields) => {
+                        if base_name != name {
+                            return Err(format!(
+                                "struct update for '{}' expects base of same type, got '{}'",
+                                name, base_name
+                            ));
+                        }
+                        base_fields.borrow().clone()
+                    }
+                    _ => {
+                        return Err(format!(
+                            "struct update for '{}' expects struct base value",
+                            name
+                        ))
+                    }
+                };
+                for (field, value) in base_fields {
+                    items.entry(field).or_insert(value);
+                }
+                self.memory_stats.struct_allocations =
+                    self.memory_stats.struct_allocations.saturating_add(1);
+                self.stack
+                    .push(Value::Struct(name, Rc::new(RefCell::new(items))));
+            }
             Instruction::BuildEnum(enum_name, variant, arity) => {
                 let mut values = Vec::with_capacity(arity);
                 for _ in 0..arity {
@@ -1668,6 +1710,7 @@ fn instruction_name(instruction: &Instruction) -> &'static str {
         Instruction::StoreLocal(_) => "StoreLocal",
         Instruction::BuildList(_) => "BuildList",
         Instruction::BuildStruct(_, _) => "BuildStruct",
+        Instruction::BuildStructUpdate(_, _) => "BuildStructUpdate",
         Instruction::BuildEnum(_, _, _) => "BuildEnum",
         Instruction::IndexGet => "IndexGet",
         Instruction::IndexSet => "IndexSet",

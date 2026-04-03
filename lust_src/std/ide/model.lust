@@ -1,4 +1,5 @@
 import "std/ui/editor"
+import "std/ui/state"
 
 type DocState = { doc_id: String, text: String, cursor: Number, sel_start: Number, sel_end: Number, scroll: Number }
 
@@ -7,11 +8,11 @@ fn default_text() -> String
 end
 
 fn load(doc_id: String) -> DocState
-    let text = ui_get("editor.text." + doc_id, default_text())
-    let cursor = caret(doc_id, ui_get("editor.caret." + doc_id, 0.0))
-    let sel_start = selection_start(doc_id, ui_get("editor.sel_start." + doc_id, cursor))
-    let sel_end = selection_end(doc_id, ui_get("editor.sel_end." + doc_id, cursor))
-    let scroll = scroll_y(doc_id, ui_get("editor.scroll." + doc_id, 0.0))
+    let text = editor_text_get(doc_id, default_text())
+    let cursor = clamp_cursor(text, caret(doc_id, ui_get(editor_caret_key(doc_id), 0.0)))
+    let sel_start = clamp_cursor(text, selection_start(doc_id, ui_get(editor_sel_start_key(doc_id), cursor)))
+    let sel_end = clamp_cursor(text, selection_end(doc_id, ui_get(editor_sel_end_key(doc_id), cursor)))
+    let scroll = index_floor(scroll_y(doc_id, ui_get(editor_scroll_key(doc_id), 0.0)))
     return DocState {
         doc_id: doc_id,
         text: text,
@@ -23,11 +24,11 @@ fn load(doc_id: String) -> DocState
 end
 
 fn apply_host_goto(state: DocState) -> DocState
-    let line = ui_get("editor.host.goto_line", -1.0)
+    let line = index_floor(host_goto_line_get(-1.0))
     if line < 1.0 then
         return state
     end
-    ui_set("editor.host.goto_line", -1.0)
+    host_goto_line_set(-1.0)
     let cursor = line_col_to_index(state.text, line - 1.0, 0.0)
     return DocState {
         doc_id: state.doc_id,
@@ -40,13 +41,13 @@ fn apply_host_goto(state: DocState) -> DocState
 end
 
 fn apply_host_select_range(state: DocState) -> DocState
-    let start_line = ui_get("editor.host.select_start_line", -1.0)
-    let end_line = ui_get("editor.host.select_end_line", -1.0)
+    let start_line = index_floor(host_select_start_line_get(-1.0))
+    let end_line = index_floor(host_select_end_line_get(-1.0))
     if start_line < 1.0 or end_line < 1.0 then
         return state
     end
-    ui_set("editor.host.select_start_line", -1.0)
-    ui_set("editor.host.select_end_line", -1.0)
+    host_select_start_line_set(-1.0)
+    host_select_end_line_set(-1.0)
     let a = start_line
     let b = end_line
     if a > b then
@@ -67,15 +68,15 @@ fn apply_host_select_range(state: DocState) -> DocState
 end
 
 fn apply_host_span(state: DocState) -> DocState
-    let start_line = ui_get("editor.host.goto_span_start", -1.0)
-    let end_line = ui_get("editor.host.goto_span_end", -1.0)
-    let mode = ui_get("editor.host.goto_span_mode", "")
+    let start_line = index_floor(host_span_start_get(-1.0))
+    let end_line = index_floor(host_span_end_get(-1.0))
+    let mode = host_span_mode_get("")
     if start_line < 1.0 or end_line < 1.0 then
         return state
     end
-    ui_set("editor.host.goto_span_start", -1.0)
-    ui_set("editor.host.goto_span_end", -1.0)
-    ui_set("editor.host.goto_span_mode", "")
+    host_span_start_set(-1.0)
+    host_span_end_set(-1.0)
+    host_span_mode_set("")
     let a = start_line
     let b = end_line
     if a > b then
@@ -110,12 +111,16 @@ fn apply_selection_controls(state: DocState, select_left, select_right, clear_se
     let next_sel_start = state.sel_start
     let next_sel_end = state.sel_end
     if select_left then
-        if next_sel_end > 0.0 then
-            next_sel_end = next_sel_end - 1.0
-        end
+        let moved = move_cursor(state.text, next_cursor, next_sel_start, next_sel_end, -1.0, true)
+        next_cursor = moved.cursor
+        next_sel_start = moved.sel_start
+        next_sel_end = moved.sel_end
     end
     if select_right then
-        next_sel_end = next_sel_end + 1.0
+        let moved = move_cursor(state.text, next_cursor, next_sel_start, next_sel_end, 1.0, true)
+        next_cursor = moved.cursor
+        next_sel_start = moved.sel_start
+        next_sel_end = moved.sel_end
     end
     if clear_selection then
         next_sel_start = next_cursor
@@ -156,7 +161,7 @@ fn apply_hit_event(state: DocState, pending: Boolean, line: Number, col: Number,
     if not pending then
         return state
     end
-    let target = line_col_to_index(state.text, line, col)
+    let target = line_col_to_index(state.text, index_floor(line), index_floor(col))
     let next_sel_start = target
     let next_sel_end = target
     if extend then
@@ -187,9 +192,9 @@ fn with_scroll_visible(state: DocState, viewport_lines: Number) -> DocState
 end
 
 fn persist(state: DocState)
-    ui_set("editor.text." + state.doc_id, state.text)
-    ui_set("editor.caret." + state.doc_id, state.cursor)
-    ui_set("editor.sel_start." + state.doc_id, state.sel_start)
-    ui_set("editor.sel_end." + state.doc_id, state.sel_end)
-    ui_set("editor.scroll." + state.doc_id, state.scroll)
+    editor_text_set(state.doc_id, state.text)
+    editor_caret_set(state.doc_id, state.cursor)
+    editor_sel_start_set(state.doc_id, state.sel_start)
+    editor_sel_end_set(state.doc_id, state.sel_end)
+    editor_scroll_set(state.doc_id, state.scroll)
 end

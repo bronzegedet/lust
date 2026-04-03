@@ -66,7 +66,13 @@ impl Value {
 
     pub fn type_name(&self) -> String {
         match self {
-            Value::Number(_) => "Number".to_string(),
+            Value::Number(v) => {
+                if v.is_finite() && v.fract() == 0.0 {
+                    "Int".to_string()
+                } else {
+                    "Number".to_string()
+                }
+            }
             Value::String(_) => "String".to_string(),
             Value::Bool(_) => "Boolean".to_string(),
             Value::List(_) => "List".to_string(),
@@ -153,6 +159,7 @@ pub enum Instruction {
     StoreLocal(usize),
     BuildList(usize),
     BuildStruct(String, Vec<String>),
+    BuildStructUpdate(String, Vec<String>),
     BuildEnum(String, String, usize),
     IndexGet,
     IndexSet,

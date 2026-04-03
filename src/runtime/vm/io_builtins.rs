@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::rc::Rc;
 
 use crate::bytecode::Value;
@@ -74,6 +74,34 @@ impl Vm {
                     }
                     _ => Some(Err(
                         "write_file expects string path and string content".to_string(),
+                    )),
+                }
+            }
+            "append_file" => {
+                if args.len() != 2 {
+                    return Some(Err(format!("append_file expects 2 args, got {}", args.len())));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::String(path), Value::String(content)) => {
+                        let mut file = match OpenOptions::new().create(true).append(true).open(path) {
+                            Ok(file) => file,
+                            Err(e) => {
+                                return Some(Err(format!(
+                                    "append_file failed to open '{}': {}",
+                                    path, e
+                                )))
+                            }
+                        };
+                        if let Err(e) = file.write_all(content.as_bytes()) {
+                            return Some(Err(format!(
+                                "append_file failed for '{}': {}",
+                                path, e
+                            )));
+                        }
+                        Some(Ok(Value::Null))
+                    }
+                    _ => Some(Err(
+                        "append_file expects string path and string content".to_string(),
                     )),
                 }
             }

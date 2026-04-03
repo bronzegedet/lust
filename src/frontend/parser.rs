@@ -833,6 +833,61 @@ impl Parser {
         self.parse_primary()
     }
 
+    fn parse_struct_fields_with_update(
+        &mut self,
+        type_name: &str,
+        trace_enabled: bool,
+    ) -> (Vec<(String, Expr)>, Option<Box<Expr>>) {
+        let mut fields = Vec::new();
+        let mut base = None;
+        while let Some(t) = self.peek() {
+            if matches!(t, Token::RBrace) {
+                break;
+            }
+            let start_pos = self.pos;
+            if matches!(self.peek(), Some(Token::DotDot)) {
+                self.advance(); // ..
+                let spread_expr = self.parse_expr();
+                base = Some(Box::new(spread_expr));
+                if matches!(self.peek(), Some(Token::Comma)) {
+                    self.advance();
+                }
+                continue;
+            }
+            if let Some(f) = self.parse_identifier() {
+                if trace_enabled {
+                    eprintln!(
+                        "[parse-trace] struct {} field {:?} at pos={} next={:?}",
+                        type_name,
+                        f,
+                        self.pos,
+                        self.peek()
+                    );
+                }
+                if matches!(self.advance(), Some(Token::Colon)) {
+                    let val = self.parse_expr();
+                    fields.push((f, val));
+                    if trace_enabled {
+                        eprintln!(
+                            "[parse-trace] struct {} field done pos={} next={:?}",
+                            type_name,
+                            self.pos,
+                            self.peek()
+                        );
+                    }
+                }
+            }
+            if self.pos == start_pos {
+                self.report_error("Expected struct field");
+                break;
+            }
+            if matches!(self.peek(), Some(Token::Comma)) {
+                self.advance();
+            }
+        }
+        (fields, base)
+    }
+
     fn parse_primary(&mut self) -> Expr {
         let mut expr = match self.advance() {
             Some(Token::Number(n)) => Expr::Number(n),
@@ -845,33 +900,16 @@ impl Parser {
                 if let Some(Token::LBrace) = self.peek() {
                     let trace_enabled = std::env::var("LUST_PARSE_TRACE").ok().as_deref() == Some("1");
                     self.advance(); // {
-                    let mut fields = Vec::new();
-                    while let Some(t) = self.peek() {
-                        if matches!(t, Token::RBrace) { break; }
-                        let start_pos = self.pos;
-                        if let Some(f) = self.parse_identifier() {
-                            if trace_enabled {
-                                eprintln!("[parse-trace] struct {} field {:?} at pos={} next={:?}", id, f, self.pos, self.peek());
-                            }
-                            if matches!(self.advance(), Some(Token::Colon)) {
-                                let val = self.parse_expr();
-                                fields.push((f, val));
-                                if trace_enabled {
-                                    eprintln!("[parse-trace] struct {} field done pos={} next={:?}", id, self.pos, self.peek());
-                                }
-                            }
-                        }
-                        if self.pos == start_pos {
-                            self.report_error("Expected struct field");
-                            break;
-                        }
-                        if matches!(self.peek(), Some(Token::Comma)) { self.advance(); }
-                    }
+                    let (fields, base) = self.parse_struct_fields_with_update(&id, trace_enabled);
                     if trace_enabled {
                         eprintln!("[parse-trace] struct {} closing pos={} next={:?}", id, self.pos, self.peek());
                     }
-                    self.advance(); // }
-                    Expr::StructInst(id, fields)
+                    if !matches!(self.peek(), Some(Token::RBrace)) {
+                        self.report_error("Expected '}' after struct fields");
+                    } else {
+                        self.advance(); // }
+                    }
+                    Expr::StructInst(id, fields, base)
                 } else if self.enum_variants.contains(&id) {
                     Expr::EnumVariant(id, Vec::new())
                 } else {
@@ -964,26 +1002,21 @@ impl Parser {
                 }
                 Some(Token::LBrace) => {
                     self.advance(); // {
-                    let mut fields = Vec::new();
-                    while let Some(t) = self.peek() {
-                        if matches!(t, Token::RBrace) { break; }
-                        let start_pos = self.pos;
-                        if let Some(field_name) = self.parse_identifier() {
-                            if matches!(self.peek(), Some(Token::Colon)) {
-                                self.advance(); // :
-                                let val = self.parse_expr();
-                                fields.push((field_name, val));
-                            }
+                    let trace_enabled = std::env::var("LUST_PARSE_TRACE").ok().as_deref() == Some("1");
+                    if let Expr::Ident(name) = expr.clone() {
+                        let (fields, base) = self.parse_struct_fields_with_update(&name, trace_enabled);
+                        if !matches!(self.peek(), Some(Token::RBrace)) {
+                            self.report_error("Expected '}' after struct fields");
+                        } else {
+                            self.advance(); // }
                         }
-                        if self.pos == start_pos {
-                            self.report_error("Expected struct field");
-                            break;
+                        expr = Expr::StructInst(name, fields, base);
+                    } else {
+                        let _ = self.parse_struct_fields_with_update("<expr>", trace_enabled);
+                        if matches!(self.peek(), Some(Token::RBrace)) {
+                            self.advance(); // }
                         }
-                        if matches!(self.peek(), Some(Token::Comma)) { self.advance(); }
-                    }
-                    self.advance(); // }
-                    if let Expr::Ident(name) = expr {
-                        expr = Expr::StructInst(name, fields);
+                        self.report_error("Struct literal target must be a type name");
                     }
                 }
                _ => break,
@@ -1268,6 +1301,21 @@ mod tests {
         match decls.as_slice() {
             [Decl::Import(path)] => assert_eq!(path, "std/lustgex"),
             other => panic!("expected one import, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_struct_update_literal_with_base_spread() {
+        let stmt = parse_single_stmt("let updated = Pair { right: 9, ..base }");
+        match stmt {
+            Stmt::Let(_, name, _, Expr::StructInst(struct_name, fields, Some(base))) => {
+                assert_eq!(name, "updated");
+                assert_eq!(struct_name, "Pair");
+                assert_eq!(fields.len(), 1);
+                assert!(matches!(fields[0], (ref f, Expr::Number(v)) if f == "right" && v == 9.0));
+                assert!(matches!(*base, Expr::Ident(ref id) if id == "base"));
+            }
+            other => panic!("unexpected stmt: {:?}", other),
         }
     }
 }

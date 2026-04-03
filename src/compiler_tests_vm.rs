@@ -436,6 +436,21 @@ print(pair.left, pair.right, total(pair))
 }
 
 #[test]
+fn vm_executes_struct_update_literal_with_base() {
+    let vm = run_vm_snippet(
+        r#"
+type Pair = { left, right }
+
+let base = Pair { left: 1, right: 2 }
+let updated = Pair { right: 9, ..base }
+print(base.left, base.right, updated.left, updated.right)
+"#,
+    );
+
+    assert_eq!(vm.output(), &["1 2 1 9".to_string()]);
+}
+
+#[test]
 fn vm_executes_struct_methods_with_self() {
     let vm = run_vm_snippet(
         r#"
@@ -823,6 +838,31 @@ print(type_of(7), type_of("hi"), type_of(null), type_of(user), type_of(msg))
 
     assert_eq!(
         vm.output(),
-        &["Number String Null Struct:User Enum:Message.Joined".to_string()]
+        &["Int String Null Struct:User Enum:Message.Joined".to_string()]
     );
+}
+
+#[test]
+fn vm_reports_int_and_number_type_of_distinctly() {
+    let vm = run_vm_snippet(
+        r#"
+print(type_of(7), type_of(7.5), type_of(7 + 2), type_of(7 / 2))
+"#,
+    );
+
+    assert_eq!(vm.output(), &["Int Number Int Number".to_string()]);
+}
+
+#[test]
+fn vm_executes_append_file_builtin() {
+    let vm = run_vm_snippet(
+        r#"
+let path = "/tmp/lust_vm_append_file_test.txt"
+write_file(path, "a")
+append_file(path, "b")
+print(read_file(path))
+"#,
+    );
+
+    assert_eq!(vm.output(), &["ab".to_string()]);
 }

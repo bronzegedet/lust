@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InferredType {
+    Int,
     Number,
     String,
     Boolean,
@@ -500,7 +501,13 @@ impl TypeChecker {
 
     fn infer_expr(&mut self, expr: &Expr, env: &mut HashMap<String, InferredType>) -> InferredType {
         match expr {
-            Expr::Number(_) => InferredType::Number,
+            Expr::Number(value) => {
+                if is_integral_number(*value) {
+                    InferredType::Int
+                } else {
+                    InferredType::Number
+                }
+            }
             Expr::StringLit(_) => InferredType::String,
             Expr::Ident(name) => env.get(name).cloned().unwrap_or(InferredType::Dynamic),
             Expr::Self_ => env.get("self").cloned().unwrap_or(InferredType::Dynamic),
@@ -559,7 +566,16 @@ impl TypeChecker {
                     _ => InferredType::Dynamic,
                 }
             }
-            Expr::StructInst(name, fields) => {
+            Expr::StructInst(name, fields, base) => {
+                if let Some(base_expr) = base {
+                    let base_ty = self.infer_expr(base_expr, env);
+                    self.report_type_mismatch(
+                        0,
+                        &InferredType::Struct(name.clone()),
+                        &base_ty,
+                        &format!("struct update base for '{}'", name),
+                    );
+                }
                 for (field, value) in fields {
                     let val_ty = self.infer_expr(value, env);
                     let expected = self
@@ -715,7 +731,7 @@ impl TypeChecker {
                             constrain_expr(label, env, InferredType::String);
                         }
                     }
-                    "get_env" | "json_decode" | "json_parse" | "compile_lustgex" | "read_file" | "read_file_result" | "try_read_file" | "write_file" | "launch_lust" | "open_file" | "list_dir" => {
+                    "get_env" | "json_decode" | "json_parse" | "compile_lustgex" | "read_file" | "read_file_result" | "try_read_file" | "write_file" | "append_file" | "launch_lust" | "open_file" | "list_dir" => {
                         for arg in args {
                             constrain_expr(arg, env, InferredType::String);
                         }
@@ -882,15 +898,28 @@ impl TypeChecker {
                             constrain_expr(left, env, InferredType::String);
                             constrain_expr(right, env, InferredType::String);
                             InferredType::String
-                        } else if left_ty == InferredType::Number || right_ty == InferredType::Number {
+                        } else if is_numeric_type(&left_ty) && is_numeric_type(&right_ty) {
                             constrain_expr(left, env, InferredType::Number);
                             constrain_expr(right, env, InferredType::Number);
-                            InferredType::Number
+                            if left_ty == InferredType::Int && right_ty == InferredType::Int {
+                                InferredType::Int
+                            } else {
+                                InferredType::Number
+                            }
                         } else {
                             InferredType::Dynamic
                         }
                     }
-                    "-" | "*" | "/" | "%" => {
+                    "-" | "*" | "%" => {
+                        constrain_expr(left, env, InferredType::Number);
+                        constrain_expr(right, env, InferredType::Number);
+                        if left_ty == InferredType::Int && right_ty == InferredType::Int {
+                            InferredType::Int
+                        } else {
+                            InferredType::Number
+                        }
+                    }
+                    "/" => {
                         constrain_expr(left, env, InferredType::Number);
                         constrain_expr(right, env, InferredType::Number);
                         InferredType::Number
@@ -1093,6 +1122,7 @@ impl TypeChecker {
     fn declared_type_from_name(&self, name: &str) -> InferredType {
         match name {
             "Number" => InferredType::Number,
+            "Int" => InferredType::Int,
             "String" => InferredType::String,
             "Boolean" => InferredType::Boolean,
             _ if name.starts_with("List<") && name.ends_with('>') => {
@@ -1438,7 +1468,7 @@ impl TypeChecker {
     fn resolve_expr_type_for_validation(&self, expr: &Expr, env: &HashMap<String, InferredType>) -> InferredType {
         match expr {
             Expr::Ident(name) => env.get(name).cloned().or_else(|| self.info.top_level.get(name).cloned()).unwrap_or(InferredType::Dynamic),
-            Expr::StructInst(name, _) => InferredType::Struct(name.clone()),
+            Expr::StructInst(name, _, _) => InferredType::Struct(name.clone()),
             Expr::Member(target, field) => {
                 if let Expr::Ident(enum_name) = target.as_ref() {
                     if self
@@ -1521,6 +1551,7 @@ fn constrain_expr(expr: &Expr, env: &mut HashMap<String, InferredType>, ty: Infe
 
 fn type_name(ty: &InferredType) -> String {
     match ty {
+        InferredType::Int => "Int".to_string(),
         InferredType::Number => "Number".to_string(),
         InferredType::String => "String".to_string(),
         InferredType::Boolean => "Boolean".to_string(),
@@ -1535,8 +1566,11 @@ fn type_name(ty: &InferredType) -> String {
 fn types_compatible(expected: &InferredType, actual: &InferredType) -> bool {
     match (expected, actual) {
         (InferredType::Dynamic, _) | (_, InferredType::Dynamic) => true,
-        (InferredType::Number, InferredType::Number)
-        | (InferredType::String, InferredType::String)
+        (InferredType::Int, InferredType::Int)
+        | (InferredType::Number, InferredType::Number)
+        | (InferredType::Number, InferredType::Int)
+        | (InferredType::Int, InferredType::Number) => true,
+        (InferredType::String, InferredType::String)
         | (InferredType::Boolean, InferredType::Boolean) => true,
         (InferredType::Struct(a), InferredType::Struct(b)) => a == b,
         (InferredType::Enum(a), InferredType::Enum(b)) => a == b,
@@ -1551,6 +1585,9 @@ fn unify(a: &InferredType, b: &InferredType) -> InferredType {
         return a.clone();
     }
     match (a, b) {
+        (InferredType::Int, InferredType::Number) | (InferredType::Number, InferredType::Int) => {
+            InferredType::Number
+        }
         (InferredType::List(ae), InferredType::List(be)) => {
             let inner = unify(ae, be);
             match inner {
@@ -1566,6 +1603,14 @@ fn unify(a: &InferredType, b: &InferredType) -> InferredType {
         (InferredType::Dynamic, other) | (other, InferredType::Dynamic) => other.clone(),
         _ => InferredType::Dynamic,
     }
+}
+
+fn is_integral_number(value: f64) -> bool {
+    value.is_finite() && value.fract() == 0.0
+}
+
+fn is_numeric_type(value: &InferredType) -> bool {
+    matches!(value, InferredType::Int | InferredType::Number)
 }
 
 fn fn_key(name: &str, target: Option<&str>) -> String {

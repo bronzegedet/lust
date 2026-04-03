@@ -1,0 +1,166 @@
+-- std/ui/state.lust
+-- Typed helpers for common UI state keys to reduce stringly ui_set/ui_get usage.
+
+fn set_app_title(title)
+    ui_set("app.title", title)
+end
+
+fn get_app_title(default_value)
+    return ui_get("app.title", default_value)
+end
+
+fn set_theme_source_label(text)
+    ui_set("theme.source_label", text)
+end
+
+fn set_theme_preview_label(text)
+    ui_set("theme.preview_label", text)
+end
+
+fn set_theme_diag_label(text)
+    ui_set("theme.diag_label", text)
+end
+
+fn set_widget_label(id, text)
+    ui_set("widget.label." + id, text)
+end
+
+fn set_widget_section(id, text)
+    ui_set("widget.section." + id, text)
+end
+
+fn set_widget_hint(id, text)
+    ui_set("widget.hint." + id, text)
+end
+
+fn set_widget_button_label(id, text)
+    ui_set("widget.button." + id + ".label", text)
+end
+
+fn set_layout_group_title(group_id, title_text)
+    ui_set("layout.group." + group_id + ".title", title_text)
+end
+
+fn set_layout_row(group_id, row_id, label_text)
+    ui_set("layout.row." + group_id + "." + row_id, label_text)
+end
+
+fn set_layout_column(group_id, column_id, label_text)
+    ui_set("layout.column." + group_id + "." + column_id, label_text)
+end
+
+fn set_layout_bind(widget_id, group_id, row_id, column_id)
+    ui_set("layout.bind." + widget_id, group_id + "/" + row_id + "/" + column_id)
+end
+
+fn field_key(id)
+    return "field." + id
+end
+
+fn toggle_key(id)
+    return "toggle." + id
+end
+
+fn slider_key(id)
+    return "slider." + id
+end
+
+fn knob_key(id)
+    return "knob." + id
+end
+
+fn button_key(id)
+    return "button." + id
+end
+
+fn editor_text_key(doc_id)
+    return "editor.text." + doc_id
+end
+
+fn editor_caret_key(doc_id)
+    return "editor.caret." + doc_id
+end
+
+fn editor_sel_start_key(doc_id)
+    return "editor.sel_start." + doc_id
+end
+
+fn editor_sel_end_key(doc_id)
+    return "editor.sel_end." + doc_id
+end
+
+fn editor_scroll_key(doc_id)
+    return "editor.scroll." + doc_id
+end
+
+fn editor_text_get(doc_id, default_value)
+    return ui_get(editor_text_key(doc_id), default_value)
+end
+
+fn editor_text_set(doc_id, value)
+    ui_set(editor_text_key(doc_id), value)
+end
+
+fn editor_caret_set(doc_id, value)
+    ui_set(editor_caret_key(doc_id), value)
+end
+
+fn editor_sel_start_set(doc_id, value)
+    ui_set(editor_sel_start_key(doc_id), value)
+end
+
+fn editor_sel_end_set(doc_id, value)
+    ui_set(editor_sel_end_key(doc_id), value)
+end
+
+fn editor_scroll_set(doc_id, value)
+    ui_set(editor_scroll_key(doc_id), value)
+end
+
+fn host_goto_line_get(default_value)
+    return ui_get("editor.host.goto_line", default_value)
+end
+
+fn host_goto_line_set(value)
+    ui_set("editor.host.goto_line", value)
+end
+
+fn host_select_start_line_get(default_value)
+    return ui_get("editor.host.select_start_line", default_value)
+end
+
+fn host_select_start_line_set(value)
+    ui_set("editor.host.select_start_line", value)
+end
+
+fn host_select_end_line_get(default_value)
+    return ui_get("editor.host.select_end_line", default_value)
+end
+
+fn host_select_end_line_set(value)
+    ui_set("editor.host.select_end_line", value)
+end
+
+fn host_span_start_get(default_value)
+    return ui_get("editor.host.goto_span_start", default_value)
+end
+
+fn host_span_start_set(value)
+    ui_set("editor.host.goto_span_start", value)
+end
+
+fn host_span_end_get(default_value)
+    return ui_get("editor.host.goto_span_end", default_value)
+end
+
+fn host_span_end_set(value)
+    ui_set("editor.host.goto_span_end", value)
+end
+
+fn host_span_mode_get(default_value)
+    return ui_get("editor.host.goto_span_mode", default_value)
+end
+
+fn host_span_mode_set(value)
+    ui_set("editor.host.goto_span_mode", value)
+end

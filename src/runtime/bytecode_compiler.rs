@@ -29,6 +29,7 @@ fn is_vm_builtin(name: &str) -> bool {
             | "read_file_result"
             | "try_read_file"
             | "write_file"
+            | "append_file"
             | "open_file"
             | "list_dir"
             | "compile_lustgex"
@@ -1120,12 +1121,20 @@ impl<'a> FunctionCompiler<'a> {
                 self.chunk.emit(Instruction::CallBuiltin("dict".to_string(), items.len() * 2));
                 Ok(())
             }
-            Expr::StructInst(name, fields) => {
+            Expr::StructInst(name, fields, base) => {
                 let field_names: Vec<String> = fields.iter().map(|(field, _)| field.clone()).collect();
+                if let Some(base_expr) = base {
+                    self.compile_expr(base_expr, line)?;
+                }
                 for (_, value) in fields {
                     self.compile_expr(value, line)?;
                 }
-                self.chunk.emit(Instruction::BuildStruct(name.clone(), field_names));
+                if base.is_some() {
+                    self.chunk
+                        .emit(Instruction::BuildStructUpdate(name.clone(), field_names));
+                } else {
+                    self.chunk.emit(Instruction::BuildStruct(name.clone(), field_names));
+                }
                 Ok(())
             }
             Expr::EnumVariant(name, args) => {

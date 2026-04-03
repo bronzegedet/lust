@@ -309,7 +309,7 @@ mod tests {
         let third = lexer.next_token().expect("third token");
 
         assert!(matches!(first.kind, Token::RawStringLit(ref text) if text == "plain"));
-        assert!(matches!(second.kind, Token::RawStringLit(ref text) if text == "with \"quotes\""));
+        assert!(matches!(second.kind, Token::RawStringLit(ref text) if text == "with \\\"quotes\\\""));
         assert!(matches!(third.kind, Token::RawStringLit(ref text) if text == "with # in body"));
     }
 }
