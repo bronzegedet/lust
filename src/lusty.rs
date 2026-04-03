@@ -219,7 +219,6 @@ struct LustyApp {
     tabs: Vec<EditorTab>,
     active_tab: usize,
     args: Vec<String>,
-    show_debug_panels: bool,
     auto_run: bool,
     debounce: Duration,
     theme_applied: bool,
@@ -239,7 +238,6 @@ impl LustyApp {
             tabs: vec![EditorTab::from_path(path)],
             active_tab: 0,
             args,
-            show_debug_panels: false,
             auto_run: true,
             debounce: Duration::from_millis(250),
             theme_applied: false,
@@ -338,12 +336,18 @@ impl LustyApp {
     }
 
     fn open_via_dialog(&mut self) {
-        let start_dir = self
-            .active_tab()
-            .and_then(|tab| tab.path.parent().map(|p| p.to_path_buf()))
-            .or_else(|| std::env::current_dir().ok());
+        let start_dir = self.active_tab().and_then(|tab| {
+            let base = if tab.path.is_absolute() {
+                tab.path.clone()
+            } else {
+                std::env::current_dir().ok()?.join(&tab.path)
+            };
+            base.parent()
+                .filter(|dir| dir.is_dir())
+                .map(|dir| dir.to_path_buf())
+        });
         let mut dialog = FileDialog::new().add_filter("Lust", &["lust"]);
-        if let Some(dir) = start_dir {
+        if let Some(dir) = start_dir.or_else(|| std::env::current_dir().ok()) {
             dialog = dialog.set_directory(dir);
         }
         if let Some(path) = dialog.pick_file() {
@@ -352,18 +356,34 @@ impl LustyApp {
     }
 
     fn open_path(&mut self, candidate: PathBuf) {
+        let normalized = if candidate.is_absolute() {
+            candidate.clone()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(&candidate))
+                .unwrap_or(candidate.clone())
+        };
+
+        if !normalized.is_file() {
+            if let Some(tab) = self.active_tab_mut() {
+                tab.diagnostics
+                    .push(format!("open failed: file not found {}", normalized.display()));
+            }
+            return;
+        }
+
         if let Some((idx, _)) = self
             .tabs
             .iter()
             .enumerate()
-            .find(|(_, tab)| tab.path == candidate)
+            .find(|(_, tab)| tab.path == normalized)
         {
             self.active_tab = idx;
             return;
         }
-        let mut tab = EditorTab::from_path(candidate.clone());
+        let mut tab = EditorTab::from_path(normalized.clone());
         tab.diagnostics
-            .push(format!("opened {}", candidate.display()));
+            .push(format!("opened {}", normalized.display()));
         self.tabs.push(tab);
         self.active_tab = self.tabs.len().saturating_sub(1);
         self.run_tab(self.active_tab);
@@ -449,8 +469,6 @@ impl eframe::App for LustyApp {
                         );
                     }
                 }
-                ui.separator();
-                ui.checkbox(&mut self.show_debug_panels, "Debug");
             });
 
             ui.horizontal_wrapped(|ui| {
@@ -463,16 +481,12 @@ impl eframe::App for LustyApp {
                     }
                 }
             });
-            if let Some(tab) = self.active_tab() {
-                ui.label(&tab.memory_line);
-            }
         });
 
         egui::SidePanel::right("live_preview")
             .resizable(true)
             .default_width(420.0)
             .show(ctx, |ui| {
-                let show_debug = self.show_debug_panels;
                 let preview_mode = self.preview_mode;
                 ui.heading("Preview");
                 ui.separator();
@@ -503,34 +517,6 @@ impl eframe::App for LustyApp {
                         }
                     }
 
-                    if show_debug {
-                        ui.separator();
-                        ui.collapsing("Diagnostics", |ui| {
-                            for line in &tab.diagnostics {
-                                ui.monospace(line);
-                            }
-                        });
-                        ui.collapsing("Program Output", |ui| {
-                            if tab.output_lines.is_empty() {
-                                ui.monospace("<no output>");
-                            } else {
-                                for line in &tab.output_lines {
-                                    ui.monospace(line);
-                                }
-                            }
-                        });
-                        ui.separator();
-                        ui.heading("Raw UI State");
-                        let mut keys = tab.ui_state.keys().cloned().collect::<Vec<_>>();
-                        keys.sort();
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for key in keys {
-                                if let Some(value) = tab.ui_state.get(&key) {
-                                    ui.monospace(format!("{} = {:?}", key, value));
-                                }
-                            }
-                        });
-                    }
                 }
             });
 
@@ -542,7 +528,8 @@ impl eframe::App for LustyApp {
             let active_tab_id = self.active_tab;
             if let Some(tab) = self.active_tab_mut() {
                 let line_count = tab.source.lines().count().max(1);
-                let editor_line_height = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
+                let editor_font = egui::FontId::monospace(14.0);
+                let editor_line_height = ui.fonts(|fonts| fonts.row_height(&editor_font));
                 egui::ScrollArea::both()
                     .id_salt(format!("lusty_editor_scroll_{}", active_tab_id))
                     .show(ui, |ui| {
@@ -636,23 +623,38 @@ impl eframe::App for LustyApp {
     }
 }
 
+fn is_internal_widget_id(id: &str) -> bool {
+    id.starts_with("editor.")
+        || id.starts_with("document.")
+        || id.starts_with("selection.")
+        || id.starts_with("commands.")
+        || id.starts_with("layout.")
+        || id.starts_with("host.")
+        || id.starts_with("cursor.")
+        || id.starts_with("scroll.")
+        || id.starts_with("preview.")
+        || id.starts_with("__")
+}
+
 fn has_widget_controls(state: &HashMap<String, Value>) -> bool {
     state.keys().any(|key| {
-        key.starts_with("field.")
-            || key.starts_with("toggle.")
-            || key.starts_with("slider.")
-            || key.starts_with("knob.")
-            || key.starts_with("button.")
+        (key.strip_prefix("field.")
+            .or_else(|| key.strip_prefix("toggle."))
+            .or_else(|| key.strip_prefix("slider."))
+            .or_else(|| key.strip_prefix("knob."))
+            .or_else(|| key.strip_prefix("button."))
+            .is_some_and(|id| !is_internal_widget_id(id)))
             || key.starts_with("widget.section.")
             || key.starts_with("widget.label.")
             || key.starts_with("widget.button.")
-            || key.starts_with("layout.")
     })
 }
 
 fn layout_lust_code(ui: &egui::Ui, text: &str, wrap_width: f32, line_height: f32) -> Arc<egui::Galley> {
     let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = wrap_width;
+    let _ = wrap_width;
+    // Keep code editor on hard lines; soft-wrap introduces visual rows that break gutter alignment.
+    job.wrap.max_width = f32::INFINITY;
 
     let default = egui::TextFormat {
         font_id: egui::FontId::monospace(14.0),
@@ -885,7 +887,11 @@ fn render_widget_preview(ui: &mut egui::Ui, state: &mut HashMap<String, Value>) 
 
     let mut fields = state
         .iter()
-        .filter_map(|(key, value)| key.strip_prefix("field.").map(|id| (id.to_string(), value.as_string())))
+        .filter_map(|(key, value)| {
+            key.strip_prefix("field.")
+                .filter(|id| !is_internal_widget_id(id))
+                .map(|id| (id.to_string(), value.as_string()))
+        })
         .collect::<Vec<_>>();
     fields.sort_by(|a, b| a.0.cmp(&b.0));
     for (id, mut text) in fields {
@@ -907,7 +913,11 @@ fn render_widget_preview(ui: &mut egui::Ui, state: &mut HashMap<String, Value>) 
 
     let mut toggles = state
         .iter()
-        .filter_map(|(key, value)| key.strip_prefix("toggle.").map(|id| (id.to_string(), value.truthy())))
+        .filter_map(|(key, value)| {
+            key.strip_prefix("toggle.")
+                .filter(|id| !is_internal_widget_id(id))
+                .map(|id| (id.to_string(), value.truthy()))
+        })
         .collect::<Vec<_>>();
     toggles.sort_by(|a, b| a.0.cmp(&b.0));
     for (id, mut on) in toggles {
@@ -923,7 +933,11 @@ fn render_widget_preview(ui: &mut egui::Ui, state: &mut HashMap<String, Value>) 
 
     let mut sliders = state
         .iter()
-        .filter_map(|(key, value)| key.strip_prefix("slider.").map(|id| (id.to_string(), value.as_number())))
+        .filter_map(|(key, value)| {
+            key.strip_prefix("slider.")
+                .filter(|id| !is_internal_widget_id(id))
+                .map(|id| (id.to_string(), value.as_number()))
+        })
         .collect::<Vec<_>>();
     sliders.sort_by(|a, b| a.0.cmp(&b.0));
     for (id, value) in sliders {
@@ -943,7 +957,11 @@ fn render_widget_preview(ui: &mut egui::Ui, state: &mut HashMap<String, Value>) 
 
     let mut knobs = state
         .iter()
-        .filter_map(|(key, value)| key.strip_prefix("knob.").map(|id| (id.to_string(), value.as_number())))
+        .filter_map(|(key, value)| {
+            key.strip_prefix("knob.")
+                .filter(|id| !is_internal_widget_id(id))
+                .map(|id| (id.to_string(), value.as_number()))
+        })
         .collect::<Vec<_>>();
     knobs.sort_by(|a, b| a.0.cmp(&b.0));
     for (id, value) in knobs {
@@ -963,7 +981,11 @@ fn render_widget_preview(ui: &mut egui::Ui, state: &mut HashMap<String, Value>) 
 
     let mut buttons = state
         .iter()
-        .filter_map(|(key, value)| key.strip_prefix("button.").map(|id| (id.to_string(), value.truthy())))
+        .filter_map(|(key, value)| {
+            key.strip_prefix("button.")
+                .filter(|id| !is_internal_widget_id(id))
+                .map(|id| (id.to_string(), value.truthy()))
+        })
         .collect::<Vec<_>>();
     buttons.sort_by(|a, b| a.0.cmp(&b.0));
     for (id, pressed) in buttons {
@@ -977,7 +999,7 @@ fn render_widget_preview(ui: &mut egui::Ui, state: &mut HashMap<String, Value>) 
                 state.insert(format!("button.{}", id), Value::Bool(true));
                 changed = true;
             }
-            ui.label(if pressed { "pressed" } else { "idle" });
+            let _ = pressed;
         });
     }
     changed
