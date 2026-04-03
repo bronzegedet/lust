@@ -11,6 +11,7 @@ pub mod runtime {
     pub mod bytecode_compiler;
     pub mod modules;
     pub mod vm;
+    pub mod vm_memory;
 }
 
 pub mod semantics {
@@ -25,7 +26,7 @@ pub mod semantics {
 }
 
 pub use frontend::{ast, lexer, parser, token, typecheck};
-pub use runtime::{bytecode, bytecode_compiler, modules, vm};
+pub use runtime::{bytecode, bytecode_compiler, modules, vm, vm_memory};
 pub use semantics::{access, control_flow, dispatch, expressions, helpers, lowered, patterns, statements};
 
 #[cfg(test)]

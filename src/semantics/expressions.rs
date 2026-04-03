@@ -94,13 +94,13 @@ pub fn lower_binary_expr_ir(
     let right_ty = infer_expr_type(right, local_types, type_info, globals);
     let result_ty = infer_expr_type(expr, local_types, type_info, globals);
     let kind = match op.as_str() {
-        "+" if left_ty == InferredType::Number && right_ty == InferredType::Number => {
+        "+" if is_numeric_type(&left_ty) && is_numeric_type(&right_ty) => {
             LoweredBinaryExprKind::NumericArithmetic
         }
         "+" if left_ty == InferredType::String && right_ty == InferredType::String => {
             LoweredBinaryExprKind::StringConcat
         }
-        "-" | "*" | "/" | "%" if left_ty == InferredType::Number && right_ty == InferredType::Number => {
+        "-" | "*" | "/" | "%" if is_numeric_type(&left_ty) && is_numeric_type(&right_ty) => {
             LoweredBinaryExprKind::NumericArithmetic
         }
         "and" | "or" | "not" if left_ty == InferredType::Boolean && right_ty == InferredType::Boolean => {
@@ -125,6 +125,10 @@ pub fn lower_binary_expr_ir(
         result_ty,
         kind,
     })
+}
+
+fn is_numeric_type(value: &InferredType) -> bool {
+    matches!(value, InferredType::Int | InferredType::Number)
 }
 
 #[cfg(test)]

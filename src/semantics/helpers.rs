@@ -11,7 +11,7 @@ pub fn infer_builtin_method_type(target_ty: &InferredType, name: &str) -> Inferr
     match (target_ty, name) {
         (_, "to_string") => InferredType::String,
         (_, "contains") | (_, "starts_with") | (_, "ends_with") | (_, "is_alphabetic") | (_, "is_numeric") => InferredType::Boolean,
-        (_, "length") => InferredType::Number,
+        (_, "length") => InferredType::Int,
         (InferredType::Map(_), "keys") => InferredType::List(Box::new(InferredType::String)),
         (InferredType::Map(inner), "values") => InferredType::List(inner.clone()),
         (InferredType::Map(_), "entries") => InferredType::List(Box::new(InferredType::Dynamic)),

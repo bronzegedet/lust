@@ -38,17 +38,32 @@ pub enum MethodDispatch {
 
 pub fn infer_call_type(name: &str) -> InferredType {
     match name {
-        "sin" | "cos" | "sqrt" | "abs" | "random_int" | "random_float" | "now" | "to_number" => {
+        "sin" | "cos" | "sqrt" | "abs" | "random_float" | "now" | "to_number" => {
             InferredType::Number
         }
+        "random_int" => InferredType::Int,
         "__range" | "__range_inclusive" => InferredType::List(Box::new(InferredType::Number)),
         "dict" => InferredType::Map(Box::new(InferredType::Dynamic)),
         "map_values" | "filter_values" | "map_entries" | "filter_entries" => InferredType::Map(Box::new(InferredType::Dynamic)),
         "get_key" => InferredType::Enum("Key".to_string()),
         "poll_key" => InferredType::Dynamic,
         "live" => InferredType::Boolean,
+        "ui_knob" | "ui_slider" => InferredType::Number,
+        "ui_toggle" | "ui_button" | "ui_key_left" | "ui_key_right" | "ui_key_up"
+        | "ui_key_down" | "ui_key_enter" | "ui_key_esc" | "ui_key_backspace"
+        | "ui_key_delete" | "ui_mouse_down" | "ui_mouse_clicked" => InferredType::Boolean,
+        "ui_theme" => InferredType::String,
+        "ui_textbox" | "ui_text_input" | "ui_command" => InferredType::String,
+        "ui_caret" | "ui_selection_start" | "ui_selection_end" | "ui_scroll_y"
+        | "ui_mouse_x" | "ui_mouse_y" | "ui_mouse_click_x" | "ui_mouse_click_y" => {
+            InferredType::Number
+        }
+        "ui_set" | "ui_get" => InferredType::Dynamic,
         "to_string" | "type_of" | "read_file" | "try_read_file" | "json_encode" | "json_decode" | "compile_lustgex"
         | "get_env" | "string_builder_build" => InferredType::String,
+        "__str_insert" | "__str_delete_range" => InferredType::String,
+        "__str_find" => InferredType::Int,
+        "__slice_range" => InferredType::Dynamic,
         "read_file_result" => InferredType::Enum("FileResult".to_string()),
         "list_dir" => InferredType::List(Box::new(InferredType::String)),
         "json_parse" => InferredType::Dynamic,
@@ -56,9 +71,9 @@ pub fn infer_call_type(name: &str) -> InferredType {
         "prompt" => InferredType::String,
         "lustgex_match" => InferredType::Boolean,
         "regex_capture" | "lustgex_capture_builtin" | "create_string_builder" | "string_builder_append" => InferredType::Dynamic,
-        "launch_lust" => InferredType::Number,
+        "launch_lust" => InferredType::Int,
         "open_file" => InferredType::Dynamic,
-        "debug" | "panic" | "assert" => InferredType::Dynamic,
+        "append_file" | "debug" | "panic" | "assert" => InferredType::Dynamic,
         _ => InferredType::Dynamic,
     }
 }
@@ -202,7 +217,13 @@ pub fn infer_expr_type(
     globals: &std::collections::HashSet<String>,
 ) -> InferredType {
     match expr {
-        Expr::Number(_) => InferredType::Number,
+        Expr::Number(value) => {
+            if value.is_finite() && value.fract() == 0.0 {
+                InferredType::Int
+            } else {
+                InferredType::Number
+            }
+        }
         Expr::StringLit(_) => InferredType::String,
         Expr::Lambda(_, _) => InferredType::Dynamic,
         Expr::Pipe(target, name, args) => {
@@ -243,16 +264,31 @@ pub fn infer_expr_type(
             let right_ty = infer_expr_type(right, local_types, type_info, globals);
             match op.as_str() {
                 "+" => {
-                    if left_ty == InferredType::Number && right_ty == InferredType::Number {
-                        InferredType::Number
+                    if is_numeric_type(&left_ty) && is_numeric_type(&right_ty) {
+                        if left_ty == InferredType::Int && right_ty == InferredType::Int {
+                            InferredType::Int
+                        } else {
+                            InferredType::Number
+                        }
                     } else if left_ty == InferredType::String && right_ty == InferredType::String {
                         InferredType::String
                     } else {
                         InferredType::Dynamic
                     }
                 }
-                "-" | "*" | "/" | "%" => {
-                    if left_ty == InferredType::Number && right_ty == InferredType::Number {
+                "-" | "*" | "%" => {
+                    if is_numeric_type(&left_ty) && is_numeric_type(&right_ty) {
+                        if left_ty == InferredType::Int && right_ty == InferredType::Int {
+                            InferredType::Int
+                        } else {
+                            InferredType::Number
+                        }
+                    } else {
+                        InferredType::Dynamic
+                    }
+                }
+                "/" => {
+                    if is_numeric_type(&left_ty) && is_numeric_type(&right_ty) {
                         InferredType::Number
                     } else {
                         InferredType::Dynamic
@@ -340,7 +376,7 @@ pub fn infer_expr_type(
             let target_ty = infer_expr_type(obj, local_types, type_info, globals);
             infer_method_return_type(&target_ty, name, type_info)
         }
-        Expr::StructInst(name, _) => InferredType::Struct(name.clone()),
+        Expr::StructInst(name, _, _) => InferredType::Struct(name.clone()),
         Expr::EnumVariant(name, _) => type_info
             .variant_to_enum
             .get(name)
@@ -385,7 +421,10 @@ pub fn infer_expr_type(
 fn unify_types(left: &InferredType, right: &InferredType) -> InferredType {
     match (left, right) {
         (InferredType::Dynamic, other) | (other, InferredType::Dynamic) => other.clone(),
-        (InferredType::Number, InferredType::Number) => InferredType::Number,
+        (InferredType::Int, InferredType::Int) => InferredType::Int,
+        (InferredType::Int, InferredType::Number)
+        | (InferredType::Number, InferredType::Int)
+        | (InferredType::Number, InferredType::Number) => InferredType::Number,
         (InferredType::String, InferredType::String) => InferredType::String,
         (InferredType::Boolean, InferredType::Boolean) => InferredType::Boolean,
         (InferredType::Struct(a), InferredType::Struct(b)) if a == b => InferredType::Struct(a.clone()),
@@ -398,4 +437,8 @@ fn unify_types(left: &InferredType, right: &InferredType) -> InferredType {
         }
         _ => InferredType::Dynamic,
     }
+}
+
+fn is_numeric_type(value: &InferredType) -> bool {
+    matches!(value, InferredType::Int | InferredType::Number)
 }
